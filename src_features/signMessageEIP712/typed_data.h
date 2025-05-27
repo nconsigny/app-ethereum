@@ -26,12 +26,45 @@ typedef enum {
 } e_type;
 
 typedef struct {
+    e_array_type type;
+    uint8_t size;
+} s_struct_712_field_array_level;
+
+typedef struct struct_712_field {
+    // TypeDesc
+    bool type_is_array : 1;
+    bool type_has_size : 1;
+    e_type type : 4;
+    // TypeNameLength
+    // TypeName
+    char *type_name;
+    // TypeSize
+    uint8_t type_size;
+    // ArrayLevelCount
+    uint8_t array_level_count;
+    // ArrayLevels
+    s_struct_712_field_array_level *array_levels;
+    // KeyNameLength
+    // KeyName
+    char *key_name;
+    struct struct_712_field *next;
+} s_struct_712_field;
+
+typedef struct struct_712 {
+    char *name;
+    s_struct_712_field *fields;
+    struct struct_712 *next;
+} s_struct_712;
+
+/*
+typedef struct {
     uint8_t *structs_array;
     uint8_t *current_struct_fields_array;
 } s_typed_data;
 
 typedef uint8_t typedesc_t;
 typedef uint8_t typesize_t;
+*/
 
 const void *get_array_in_mem(const void *ptr, uint8_t *const array_size);
 const char *get_string_in_mem(const uint8_t *ptr, uint8_t *const string_length);
