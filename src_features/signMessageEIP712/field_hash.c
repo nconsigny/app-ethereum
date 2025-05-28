@@ -116,7 +116,7 @@ static uint8_t *field_hash_finalize_dynamic(void) {
     uint8_t *value;
     cx_err_t error = CX_INTERNAL_ERROR;
 
-    if ((value = mem_legacy_alloc(KECCAK256_HASH_BYTESIZE)) == NULL) {
+    if ((value = app_mem_alloc(KECCAK256_HASH_BYTESIZE)) == NULL) {
         apdu_response_code = APDU_RESPONSE_INSUFFICIENT_MEMORY;
         return NULL;
     }
@@ -138,7 +138,7 @@ end:
  * @param[in] field_type the struct field's type
  * @param[in] hash the field hash
  */
-static void field_hash_feed_parent(e_type field_type, const uint8_t *const hash) {
+static void field_hash_feed_parent(e_type field_type, const uint8_t *hash) {
     uint8_t len;
 
     if (IS_DYN(field_type)) {
@@ -153,7 +153,7 @@ static void field_hash_feed_parent(e_type field_type, const uint8_t *const hash)
     // continue the progressive hash on it
     hash_nbytes(hash, len, (cx_hash_t *) hash_ctx);
     // deallocate it
-    mem_legacy_dealloc(len);
+    app_mem_free((void*) hash);
 }
 
 /**
