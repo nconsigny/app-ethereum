@@ -11,6 +11,13 @@
 static s_path *path_struct = NULL;
 static s_path *path_backup = NULL;
 
+typedef struct hash_ctx {
+    cx_sha3_t hash;
+    struct hash_ctx *next;
+} s_hash_ctx;
+
+static s_hash_ctx *g_hash_ctxs = NULL;
+
 /**
  * Get the field pointer to by the first N depths of the given path
  *
@@ -140,7 +147,27 @@ static bool path_depth_list_push(void) {
  * @return pointer to the hashing context
  */
 static cx_sha3_t *get_last_hash_ctx(void) {
-    return ((cx_sha3_t *) mem_legacy_alloc(0)) - 1;
+    s_hash_ctx *hash_ctx = g_hash_ctxs;
+
+    if (hash_ctx == NULL) return NULL;
+    for (; hash_ctx->next != NULL; hash_ctx = hash_ctx->next);
+    return &hash_ctx->hash;
+}
+
+static void remove_last_hash_ctx(void) {
+    s_hash_ctx *tmp;
+
+    if (g_hash_ctxs != NULL) {
+        if (g_hash_ctxs->next == NULL) {
+            // only element
+            app_mem_free(g_hash_ctxs);
+            g_hash_ctxs = NULL;
+        } else {
+            for (tmp = g_hash_ctxs; tmp->next->next != NULL; tmp = tmp->next);
+            app_mem_free(tmp->next);
+            tmp->next = NULL;
+        }
+    }
 }
 
 /**
@@ -159,7 +186,7 @@ static bool finalize_hash_depth(uint8_t *hash) {
     // finalize hash
     CX_CHECK(
         cx_hash_no_throw((cx_hash_t *) hash_ctx, CX_LAST, NULL, 0, hash, KECCAK256_HASH_BYTESIZE));
-    mem_legacy_dealloc(sizeof(*hash_ctx));  // remove hash context
+    remove_last_hash_ctx();
     return hashed_bytes > 0;
 end:
     return false;
