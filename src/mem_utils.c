@@ -8,11 +8,9 @@
  * Format an unsigned number up to 32-bit into memory into an ASCII string.
  *
  * @param[in] value Value to write in memory
- * @param[out] length number of characters written to memory
- *
  * @return pointer to memory area or \ref NULL if the allocation failed
  */
-char *mem_legacy_alloc_and_format_uint(uint32_t value, uint8_t *const length) {
+const char *mem_alloc_and_format_uint(uint32_t value) {
     char *mem_ptr;
     uint32_t value_copy;
     uint8_t size;
@@ -24,12 +22,8 @@ char *mem_legacy_alloc_and_format_uint(uint32_t value, uint8_t *const length) {
         size += 1;
     }
     // +1 for the null character
-    if ((mem_ptr = mem_legacy_alloc(sizeof(char) * (size + 1)))) {
+    if ((mem_ptr = app_mem_alloc(sizeof(char) * (size + 1)))) {
         snprintf(mem_ptr, (size + 1), "%u", value);
-        mem_legacy_dealloc(sizeof(char));  // to skip the null character
-        if (length != NULL) {
-            *length = size;
-        }
     }
     return mem_ptr;
 }

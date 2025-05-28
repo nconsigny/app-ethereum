@@ -15,8 +15,7 @@
  */
 static bool format_hash_field_type_size(const void *const field_ptr, cx_hash_t *hash_ctx) {
     uint16_t field_size;
-    char *uint_str_ptr;
-    uint8_t uint_str_len;
+    const char *uint_str_ptr;
 
     field_size = get_struct_field_typesize(field_ptr);
     switch (struct_field_type(field_ptr)) {
@@ -31,13 +30,13 @@ static bool format_hash_field_type_size(const void *const field_ptr, cx_hash_t *
             apdu_response_code = APDU_RESPONSE_INVALID_DATA;
             return false;
     }
-    uint_str_ptr = mem_legacy_alloc_and_format_uint(field_size, &uint_str_len);
+    uint_str_ptr = mem_alloc_and_format_uint(field_size);
     if (uint_str_ptr == NULL) {
         apdu_response_code = APDU_RESPONSE_INSUFFICIENT_MEMORY;
         return false;
     }
-    hash_nbytes((uint8_t *) uint_str_ptr, uint_str_len, hash_ctx);
-    mem_legacy_dealloc(uint_str_len);
+    hash_nbytes((uint8_t *) uint_str_ptr, strlen(uint_str_ptr), hash_ctx);
+    app_mem_free((void*) uint_str_ptr);
     return true;
 }
 
@@ -50,8 +49,7 @@ static bool format_hash_field_type_size(const void *const field_ptr, cx_hash_t *
  */
 static bool format_hash_field_type_array_levels(const void *const field_ptr, cx_hash_t *hash_ctx) {
     uint8_t array_size;
-    char *uint_str_ptr;
-    uint8_t uint_str_len;
+    const char *uint_str_ptr;
     const void *lvl_ptr;
     uint8_t lvls_count;
 
@@ -63,13 +61,12 @@ static bool format_hash_field_type_array_levels(const void *const field_ptr, cx_
             case ARRAY_DYNAMIC:
                 break;
             case ARRAY_FIXED_SIZE:
-                if ((uint_str_ptr = mem_legacy_alloc_and_format_uint(array_size, &uint_str_len)) ==
-                    NULL) {
+                if ((uint_str_ptr = mem_alloc_and_format_uint(array_size)) == NULL) {
                     apdu_response_code = APDU_RESPONSE_INSUFFICIENT_MEMORY;
                     return false;
                 }
-                hash_nbytes((uint8_t *) uint_str_ptr, uint_str_len, hash_ctx);
-                mem_legacy_dealloc(uint_str_len);
+                hash_nbytes((uint8_t *) uint_str_ptr, strlen(uint_str_ptr), hash_ctx);
+                app_mem_free((void*) uint_str_ptr);
                 break;
             default:
                 // should not be in here :^)
