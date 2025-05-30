@@ -61,31 +61,38 @@ static bool encode_and_hash_type(const s_struct_712 *struct_ptr) {
     return true;
 }
 
+typedef struct struct_dep {
+    const s_struct_712 *s;
+    struct struct_dep *next;
+} s_struct_dep;
+
 /**
  * Sort the given structs based by alphabetical order
  *
- * @param[in] deps_count count of how many struct dependencies pointers
  * @param[in,out] deps pointer to the first dependency pointer
  */
-static void sort_dependencies(uint8_t deps_count, const void **deps) {
+static void sort_dependencies(s_struct_dep **deps) {
     bool changed;
-    const void *tmp_ptr;
+    s_struct_dep *a, *b;
     const char *name1, *name2;
     uint8_t namelen1, namelen2;
     int str_cmp_result;
 
     do {
         changed = false;
-        for (size_t idx = 0; (idx + 1) < deps_count; ++idx) {
-            name1 = get_struct_name(*(deps + idx), &namelen1);
-            name2 = get_struct_name(*(deps + idx + 1), &namelen2);
+        for (s_struct_dep **tmp = deps; (*tmp != NULL) && ((*tmp)->next != NULL); tmp = &(*tmp)->next) {
+            name1 = (*tmp)->s->name;
+            namelen1 = strlen(name1);
+            name2 = (*tmp)->next->s->name;
+            namelen2 = strlen(name2);
 
             str_cmp_result = strncmp(name1, name2, MIN(namelen1, namelen2));
             if ((str_cmp_result > 0) || ((str_cmp_result == 0) && (namelen1 > namelen2))) {
-                tmp_ptr = *(deps + idx);
-                *(deps + idx) = *(deps + idx + 1);
-                *(deps + idx + 1) = tmp_ptr;
-
+                a = *tmp;
+                b = a->next;
+                *tmp = b;
+                a->next = b->next;
+                b->next = a;
                 changed = true;
             }
         }
@@ -100,15 +107,13 @@ static void sort_dependencies(uint8_t deps_count, const void **deps) {
  * @param[in] struct_ptr pointer to the struct we are getting the dependencies of
  * @return pointer to the first found dependency, \ref NULL otherwise
  */
-static const void **get_struct_dependencies(uint8_t *const deps_count,
-                                            const void **first_dep,
-                                            const s_struct_712 *struct_ptr) {
-    uint8_t fields_count;
+static s_struct_dep *get_struct_dependencies(s_struct_dep *first_dep,
+                                             const s_struct_712 *struct_ptr) {
     const s_struct_712_field *field_ptr;
     const char *arg_structname;
-    const void *arg_struct_ptr;
-    size_t dep_idx;
-    const void **new_dep;
+    const s_struct_712 *arg_struct_ptr;
+    s_struct_dep *tmp;
+    s_struct_dep *new_dep;
 
     for (field_ptr = struct_ptr->fields; field_ptr != NULL; field_ptr = field_ptr->next) {
         if (field_ptr->type == TYPE_CUSTOM) {
@@ -123,25 +128,29 @@ static const void **get_struct_dependencies(uint8_t *const deps_count,
             }
 
             // check if it is not already present in the dependencies array
-            for (dep_idx = 0; dep_idx < *deps_count; ++dep_idx) {
+            for (tmp = first_dep; tmp != NULL; tmp = tmp->next) {
                 // it's a match!
-                if (*(first_dep + dep_idx) == arg_struct_ptr) {
+                if (tmp->s == arg_struct_ptr) {
                     break;
                 }
             }
             // if it's not present in the array, add it and recurse into it
-            if (dep_idx == *deps_count) {
-                *deps_count += 1;
-                if ((new_dep = MEM_ALLOC_AND_ALIGN_TYPE(void *)) == NULL) {
+            if (tmp == NULL) {
+                if ((new_dep = app_mem_alloc(sizeof(s_struct_dep))) == NULL) {
                     apdu_response_code = APDU_RESPONSE_INSUFFICIENT_MEMORY;
                     return NULL;
                 }
-                if (*deps_count == 1) {
+                explicit_bzero(new_dep, sizeof(*new_dep));
+                new_dep->s = arg_struct_ptr;
+                if (first_dep == NULL) {
                     first_dep = new_dep;
+                } else {
+                    // add to list
+                    for (tmp = first_dep; (tmp != NULL) && (tmp->next != NULL); tmp = tmp->next);
+                    tmp->next = new_dep;
                 }
-                *new_dep = arg_struct_ptr;
                 // TODO: Move away from recursive calls
-                get_struct_dependencies(deps_count, first_dep, arg_struct_ptr);
+                get_struct_dependencies(first_dep, arg_struct_ptr);
             }
         }
     }
@@ -158,8 +167,7 @@ static const void **get_struct_dependencies(uint8_t *const deps_count,
  */
 bool type_hash(const char *const struct_name, const uint8_t struct_name_length, uint8_t *hash_buf) {
     const void *struct_ptr;
-    uint8_t deps_count = 0;
-    const void **deps;
+    s_struct_dep *deps;
     cx_err_t error = CX_INTERNAL_ERROR;
 
     if ((struct_ptr = get_structn(struct_name, struct_name_length)) == NULL) {
@@ -169,22 +177,22 @@ bool type_hash(const char *const struct_name, const uint8_t struct_name_length, 
         return false;
     }
     CX_CHECK(cx_keccak_init_no_throw(&global_sha3, 256));
-    deps = get_struct_dependencies(&deps_count, NULL, struct_ptr);
-    if ((deps_count > 0) && (deps == NULL)) {
+    deps = get_struct_dependencies(NULL, struct_ptr);
+    if (deps == NULL) {
         return false;
     }
-    sort_dependencies(deps_count, deps);
+    sort_dependencies(&deps);
     if (encode_and_hash_type(struct_ptr) == false) {
         return false;
     }
     // loop over each struct and generate string
-    for (int idx = 0; idx < deps_count; ++idx) {
-        if (encode_and_hash_type(*deps) == false) {
+    for (const s_struct_dep *tmp = deps; tmp != NULL; tmp = tmp->next) {
+        if (encode_and_hash_type(tmp->s) == false) {
             return false;
         }
-        deps += 1;
     }
 
+    // TODO: free deps list
     // copy hash into memory
     CX_CHECK(cx_hash_no_throw((cx_hash_t *) &global_sha3,
                               CX_LAST,
