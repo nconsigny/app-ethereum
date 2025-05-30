@@ -28,7 +28,7 @@ const void *path_get_field(void);
 bool path_advance(bool do_typehash);
 bool path_init(void);
 void path_deinit(void);
-bool path_new_array_depth(const uint8_t *const data, uint8_t length);
+bool path_new_array_depth(const uint8_t *data, uint8_t length);
 e_root_type path_get_root_type(void);
 const void *path_get_root(void);
 const void *path_get_nth_field(uint8_t n);

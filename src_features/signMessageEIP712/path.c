@@ -27,10 +27,9 @@ static s_hash_ctx *g_hash_ctxs = NULL;
  * @return the field which the first Nth depths points to
  */
 static const void *get_nth_field_from(const s_path *path, uint8_t *fields_count_ptr, uint8_t n) {
-    const void *struct_ptr = NULL;
-    const void *field_ptr = NULL;
+    const s_struct_712 *struct_ptr = NULL;
+    const s_struct_712_field *field_ptr = NULL;
     const char *typename;
-    uint8_t fields_count;
 
     if (path == NULL) {
         return NULL;
@@ -43,20 +42,16 @@ static const void *get_nth_field_from(const s_path *path, uint8_t *fields_count_
         return NULL;
     }
     for (uint8_t depth = 0; depth < n; ++depth) {
-        field_ptr = get_struct_fields_array(struct_ptr, &fields_count);
-
-        if (fields_count_ptr != NULL) {
-            *fields_count_ptr = fields_count;
-        }
-        // check if the index at this depth makes sense
-        if (path->depths[depth] > fields_count) {
+        if ((field_ptr = struct_ptr->fields) == NULL) {
             return NULL;
         }
 
         for (uint8_t index = 0; index < path->depths[depth]; ++index) {
-            field_ptr = get_next_struct_field(field_ptr);
+            if ((field_ptr = field_ptr->next) == NULL) {
+                return NULL;
+            }
         }
-        if (struct_field_type(field_ptr) == TYPE_CUSTOM) {
+        if (field_ptr->type == TYPE_CUSTOM) {
             typename = get_struct_field_typename(field_ptr);
             if ((struct_ptr = get_structn(typename, strlen(typename))) == NULL) {
                 return NULL;
@@ -330,10 +325,9 @@ static bool array_depth_list_pop(void) {
  * @return whether the path update worked or not
  */
 static bool path_update(bool skip_if_array, bool stop_at_array, bool do_typehash) {
-    uint8_t fields_count;
-    const void *struct_ptr;
-    const void *starting_field_ptr;
-    const void *field_ptr;
+    const s_struct_712 *struct_ptr;
+    const s_struct_712_field *starting_field_ptr;
+    const s_struct_712_field *field_ptr;
     const char *typename;
     uint8_t hash[KECCAK256_HASH_BYTESIZE];
 
@@ -344,13 +338,13 @@ static bool path_update(bool skip_if_array, bool stop_at_array, bool do_typehash
         return false;
     }
     field_ptr = starting_field_ptr;
-    while (struct_field_type(field_ptr) == TYPE_CUSTOM) {
+    while (field_ptr->type == TYPE_CUSTOM) {
         // check if we meet one of the given conditions
         if (((field_ptr == starting_field_ptr) && skip_if_array) ||
             ((field_ptr != starting_field_ptr) && stop_at_array)) {
             // only if it is the first iteration of that array depth
             if ((path_struct->array_depths[path_struct->array_depth_count - 1].index == 0) &&
-                struct_field_is_array(field_ptr)) {
+                field_ptr->type_is_array) {
                 break;
             }
         }
@@ -358,7 +352,7 @@ static bool path_update(bool skip_if_array, bool stop_at_array, bool do_typehash
         if ((struct_ptr = get_structn(typename, strlen(typename))) == NULL) {
             return false;
         }
-        if ((field_ptr = get_struct_fields_array(struct_ptr, &fields_count)) == NULL) {
+        if ((field_ptr = struct_ptr->fields) == NULL) {
             return false;
         }
 
@@ -488,7 +482,7 @@ static bool check_and_add_array_depth(const void *depth,
  * Used for the handling of discarded filtered fields
  */
 static void backup_path(void) {
-    const void *field_ptr;
+    const s_struct_712_field *field_ptr;
 
     memcpy(path_backup, path_struct, sizeof(*path_backup));
     // decrease while it does not point to an array type
@@ -496,7 +490,7 @@ static void backup_path(void) {
         if ((field_ptr = path_backup_get_nth_field(path_backup->depth_count)) == NULL) {
             return;
         }
-        if (struct_field_is_array(field_ptr)) {
+        if (field_ptr->type_is_array) {
             break;
         }
         path_backup->depth_count -= 1;
@@ -510,8 +504,8 @@ static void backup_path(void) {
  * @param[in] length length of data
  * @return whether the add was successful or not
  */
-bool path_new_array_depth(const uint8_t *const data, uint8_t length) {
-    const void *field_ptr = NULL;
+bool path_new_array_depth(const uint8_t *data, uint8_t length) {
+    const s_struct_712_field *field_ptr = NULL;
     const void *depth = NULL;
     uint8_t depth_count;
     uint8_t total_count = 0;
@@ -542,7 +536,7 @@ bool path_new_array_depth(const uint8_t *const data, uint8_t length) {
             apdu_response_code = APDU_RESPONSE_CONDITION_NOT_SATISFIED;
             return false;
         }
-        if (struct_field_is_array(field_ptr)) {
+        if (field_ptr->type_is_array) {
             if ((depth = get_struct_field_array_lvls_array(field_ptr, &depth_count)) == NULL) {
                 apdu_response_code = APDU_RESPONSE_CONDITION_NOT_SATISFIED;
                 return false;
@@ -562,7 +556,7 @@ bool path_new_array_depth(const uint8_t *const data, uint8_t length) {
         PRINTF("Did not find a matching array type.\n");
         return false;
     }
-    is_custom = struct_field_type(field_ptr) == TYPE_CUSTOM;
+    is_custom = field_ptr->type == TYPE_CUSTOM;
     if (push_new_hash_depth(!is_custom) == false) {
         return false;
     }
@@ -727,12 +721,10 @@ uint8_t path_backup_get_depth_count(void) {
 bool path_exists_in_backup(const char *path, size_t length) {
     size_t offset = 0;
     size_t i;
-    const void *field_ptr;
+    const s_struct_712_field *field_ptr;
     const char *typename;
-    const void *struct_ptr;
-    uint8_t fields_count;
+    const s_struct_712 *struct_ptr;
     const char *key;
-    uint8_t key_len;
 
     field_ptr = get_nth_field_from(path_backup, NULL, path_backup->depth_count);
     while (offset < length) {
@@ -741,7 +733,7 @@ bool path_exists_in_backup(const char *path, size_t length) {
         }
         offset += 1;
         if (((offset + 2) <= length) && (memcmp(path + offset, "[]", 2) == 0)) {
-            if (!struct_field_is_array(field_ptr)) {
+            if (!field_ptr->type_is_array) {
                 return false;
             }
             offset += 2;
@@ -752,16 +744,13 @@ bool path_exists_in_backup(const char *path, size_t length) {
             if ((struct_ptr = get_structn(typename, strlen(typename))) == NULL) {
                 return false;
             }
-            field_ptr = get_struct_fields_array(struct_ptr, &fields_count);
-            while (fields_count > 0) {
-                key = get_struct_field_keyname(field_ptr, &key_len);
-                if ((key_len == i) && (memcmp(key, path + offset, i) == 0)) {
+            for (field_ptr = struct_ptr->fields; field_ptr != NULL; field_ptr = field_ptr->next) {
+                key = field_ptr->key_name;
+                if ((strlen(key) == i) && (memcmp(key, path + offset, i) == 0)) {
                     break;
                 }
-                field_ptr = get_next_struct_field(field_ptr);
-                fields_count -= 1;
             }
-            if (fields_count == 0) {
+            if (field_ptr == NULL) {
                 return false;
             }
             offset += i;

@@ -12,9 +12,8 @@
  * @param[in] field_ptr pointer to the struct field
  * @return \ref true it finished correctly, \ref false if it didn't (memory allocation)
  */
-static bool encode_and_hash_field(const void *const field_ptr) {
+static bool encode_and_hash_field(const s_struct_712_field *field_ptr) {
     const char *name;
-    uint8_t length;
 
     if (!format_hash_field_type(field_ptr, (cx_hash_t *) &global_sha3)) {
         return false;
@@ -23,8 +22,8 @@ static bool encode_and_hash_field(const void *const field_ptr) {
     hash_byte(' ', (cx_hash_t *) &global_sha3);
 
     // field name
-    name = get_struct_field_keyname(field_ptr, &length);
-    hash_nbytes((uint8_t *) name, length, (cx_hash_t *) &global_sha3);
+    name = field_ptr->key_name;
+    hash_nbytes((uint8_t *) name, strlen(name), (cx_hash_t *) &global_sha3);
     return true;
 }
 
@@ -35,31 +34,26 @@ static bool encode_and_hash_field(const void *const field_ptr) {
  * @param[in] str_length length of the formatted string in memory
  * @return pointer of the string in memory, \ref NULL in case of an error
  */
-static bool encode_and_hash_type(const void *const struct_ptr) {
+static bool encode_and_hash_type(const s_struct_712 *struct_ptr) {
     const char *struct_name;
-    uint8_t struct_name_length;
-    const uint8_t *field_ptr;
-    uint8_t fields_count;
+    const s_struct_712_field *field_ptr;
 
     // struct name
-    struct_name = get_struct_name(struct_ptr, &struct_name_length);
-    hash_nbytes((uint8_t *) struct_name, struct_name_length, (cx_hash_t *) &global_sha3);
+    struct_name = struct_ptr->name;
+    hash_nbytes((uint8_t *) struct_name, strlen(struct_name), (cx_hash_t *) &global_sha3);
 
     // opening struct parentheses
     hash_byte('(', (cx_hash_t *) &global_sha3);
 
-    field_ptr = get_struct_fields_array(struct_ptr, &fields_count);
-    for (uint8_t idx = 0; idx < fields_count; ++idx) {
+    for (field_ptr = struct_ptr->fields; field_ptr != NULL; field_ptr = field_ptr->next) {
         // comma separating struct fields
-        if (idx > 0) {
+        if (field_ptr != struct_ptr->fields) {
             hash_byte(',', (cx_hash_t *) &global_sha3);
         }
 
         if (encode_and_hash_field(field_ptr) == false) {
             return NULL;
         }
-
-        field_ptr = get_next_struct_field(field_ptr);
     }
     // closing struct parentheses
     hash_byte(')', (cx_hash_t *) &global_sha3);
@@ -108,17 +102,16 @@ static void sort_dependencies(uint8_t deps_count, const void **deps) {
  */
 static const void **get_struct_dependencies(uint8_t *const deps_count,
                                             const void **first_dep,
-                                            const void *const struct_ptr) {
+                                            const s_struct_712 *struct_ptr) {
     uint8_t fields_count;
-    const void *field_ptr;
+    const s_struct_712_field *field_ptr;
     const char *arg_structname;
     const void *arg_struct_ptr;
     size_t dep_idx;
     const void **new_dep;
 
-    field_ptr = get_struct_fields_array(struct_ptr, &fields_count);
-    for (uint8_t idx = 0; idx < fields_count; ++idx) {
-        if (struct_field_type(field_ptr) == TYPE_CUSTOM) {
+    for (field_ptr = struct_ptr->fields; field_ptr != NULL; field_ptr = field_ptr->next) {
+        if (field_ptr->type == TYPE_CUSTOM) {
             // get struct name
             arg_structname = get_struct_field_typename(field_ptr);
             // from its name, get the pointer to its definition
@@ -151,7 +144,6 @@ static const void **get_struct_dependencies(uint8_t *const deps_count,
                 get_struct_dependencies(deps_count, first_dep, arg_struct_ptr);
             }
         }
-        field_ptr = get_next_struct_field(field_ptr);
     }
     return first_dep;
 }

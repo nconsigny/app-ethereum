@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "ux.h"
 #include "uint256.h"
+#include "typed_data.h"
 #include "trusted_name.h"
 
 typedef enum { EIP712_FILTERING_BASIC, EIP712_FILTERING_FULL } e_eip712_filtering_mode;
@@ -15,8 +16,8 @@ typedef enum {
 bool ui_712_init(void);
 void ui_712_deinit(void);
 e_eip712_nfs ui_712_next_field(void);
-bool ui_712_review_struct(const void *const struct_ptr);
-bool ui_712_feed_to_display(const void *field_ptr,
+bool ui_712_review_struct(const s_struct_712 *struct_ptr);
+bool ui_712_feed_to_display(const s_struct_712_field *field_ptr,
                             const uint8_t *data,
                             uint8_t length,
                             bool first,
@@ -44,7 +45,7 @@ bool ui_712_filters_counter_incr(void);
 void ui_712_token_join_prepare_addr_check(uint8_t index);
 void ui_712_token_join_prepare_amount(uint8_t index, const char *name, uint8_t name_length);
 void amount_join_set_token_received(void);
-bool ui_712_show_raw_key(const void *field_ptr);
+bool ui_712_show_raw_key(const s_struct_712_field *field_ptr);
 bool ui_712_push_new_filter_path(uint32_t path_crc);
 void ui_712_set_discarded_path(const char *path, uint8_t length);
 const char *ui_712_get_discarded_path(uint8_t *length);

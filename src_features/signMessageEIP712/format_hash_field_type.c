@@ -13,12 +13,12 @@
  * @param[in] hash_ctx pointer to the hashing context
  * @return whether the formatting & hashing were successful or not
  */
-static bool format_hash_field_type_size(const void *const field_ptr, cx_hash_t *hash_ctx) {
+static bool format_hash_field_type_size(const s_struct_712_field *field_ptr, cx_hash_t *hash_ctx) {
     uint16_t field_size;
     const char *uint_str_ptr;
 
-    field_size = get_struct_field_typesize(field_ptr);
-    switch (struct_field_type(field_ptr)) {
+    field_size = field_ptr->type_size;
+    switch (field_ptr->type) {
         case TYPE_SOL_INT:
         case TYPE_SOL_UINT:
             field_size *= 8;  // bytes -> bits
@@ -47,21 +47,17 @@ static bool format_hash_field_type_size(const void *const field_ptr, cx_hash_t *
  * @param[in] hash_ctx pointer to the hashing context
  * @return whether the formatting & hashing were successful or not
  */
-static bool format_hash_field_type_array_levels(const void *const field_ptr, cx_hash_t *hash_ctx) {
-    uint8_t array_size;
+static bool format_hash_field_type_array_levels(const s_struct_712_field *field_ptr, cx_hash_t *hash_ctx) {
     const char *uint_str_ptr;
-    const void *lvl_ptr;
-    uint8_t lvls_count;
 
-    lvl_ptr = get_struct_field_array_lvls_array(field_ptr, &lvls_count);
-    while (lvls_count-- > 0) {
+    for (int i = 0; i < field_ptr->array_level_count; ++i) {
         hash_byte('[', hash_ctx);
 
-        switch (struct_field_array_depth(lvl_ptr, &array_size)) {
+        switch (field_ptr->array_levels[i].type) {
             case ARRAY_DYNAMIC:
                 break;
             case ARRAY_FIXED_SIZE:
-                if ((uint_str_ptr = mem_alloc_and_format_uint(array_size)) == NULL) {
+                if ((uint_str_ptr = mem_alloc_and_format_uint(field_ptr->array_levels[i].size)) == NULL) {
                     apdu_response_code = APDU_RESPONSE_INSUFFICIENT_MEMORY;
                     return false;
                 }
@@ -74,7 +70,6 @@ static bool format_hash_field_type_array_levels(const void *const field_ptr, cx_
                 return false;
         }
         hash_byte(']', hash_ctx);
-        lvl_ptr = get_next_struct_field_array_lvl(lvl_ptr);
     }
     return true;
 }

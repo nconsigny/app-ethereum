@@ -207,9 +207,8 @@ e_eip712_nfs ui_712_next_field(void) {
  * @param[in] struct_ptr pointer to the structure to be shown
  * @return whether it was successful or not
  */
-bool ui_712_review_struct(const void *struct_ptr) {
+bool ui_712_review_struct(const s_struct_712 *struct_ptr) {
     const char *struct_name;
-    uint8_t struct_name_length;
     const char *title = "Review struct";
 
     if (ui_ctx == NULL) {
@@ -217,8 +216,8 @@ bool ui_712_review_struct(const void *struct_ptr) {
     }
 
     ui_712_set_title(title, strlen(title));
-    if ((struct_name = get_struct_name(struct_ptr, &struct_name_length)) != NULL) {
-        ui_712_set_value(struct_name, struct_name_length);
+    if ((struct_name = struct_ptr->name) != NULL) {
+        ui_712_set_value(struct_name, strlen(struct_name));
     }
     return ui_712_redraw_generic_step();
 }
@@ -352,7 +351,7 @@ static bool ui_712_format_bytes(const uint8_t *data, uint8_t length, bool first,
 static bool ui_712_format_int(const uint8_t *data,
                               uint8_t length,
                               bool first,
-                              const void *field_ptr) {
+                              const s_struct_712_field *field_ptr) {
     uint256_t value256;
     uint128_t value128;
     int32_t value32;
@@ -362,7 +361,7 @@ static bool ui_712_format_int(const uint8_t *data,
     if (!first) {
         return false;
     }
-    switch (get_struct_field_typesize(field_ptr) * 8) {
+    switch (field_ptr->type_size * 8) {
         case 256:
             convertUint256BE(data, length, &value256);
             tostring256_signed(&value256, 10, strings.tmp.tmp, sizeof(strings.tmp.tmp));
@@ -542,10 +541,10 @@ static bool ui_712_format_trusted_name(const uint8_t *data, uint8_t length) {
  * @param[in] field_ptr pointer to the new struct field
  * @return whether it was successful or not
  */
-static bool ui_712_format_datetime(const uint8_t *data, uint8_t length, const void *field_ptr) {
+static bool ui_712_format_datetime(const uint8_t *data, uint8_t length, const s_struct_712_field *field_ptr) {
     time_t timestamp;
 
-    if ((length >= get_struct_field_typesize(field_ptr)) && ismaxint((uint8_t *) data, length)) {
+    if ((length >= field_ptr->type_size) && ismaxint((uint8_t *) data, length)) {
         snprintf(strings.tmp.tmp, sizeof(strings.tmp.tmp), "Unlimited");
         return true;
     }
@@ -562,7 +561,7 @@ static bool ui_712_format_datetime(const uint8_t *data, uint8_t length, const vo
  * @param[in] first if this is the first chunk
  * @param[in] last if this is the last chunk
  */
-bool ui_712_feed_to_display(const void *field_ptr,
+bool ui_712_feed_to_display(const s_struct_712_field *field_ptr,
                             const uint8_t *data,
                             uint8_t length,
                             bool first,
@@ -577,7 +576,7 @@ bool ui_712_feed_to_display(const void *field_ptr,
     }
     // Value
     if (ui_712_field_shown()) {
-        switch (struct_field_type(field_ptr)) {
+        switch (field_ptr->type) {
             case TYPE_SOL_STRING:
                 ui_712_format_str(data, length, last);
                 break;
@@ -833,16 +832,15 @@ void ui_712_token_join_prepare_amount(uint8_t index, const char *name, uint8_t n
  * @param[in] field_ptr pointer to the field
  * @return whether it was successful or not
  */
-bool ui_712_show_raw_key(const void *field_ptr) {
+bool ui_712_show_raw_key(const s_struct_712_field *field_ptr) {
     const char *key;
-    uint8_t key_len;
 
-    if ((key = get_struct_field_keyname(field_ptr, &key_len)) == NULL) {
+    if ((key = field_ptr->key_name) == NULL) {
         return false;
     }
 
     if (ui_712_field_shown() && !(ui_ctx->field_flags & UI_712_FIELD_NAME_PROVIDED)) {
-        ui_712_set_title(key, key_len);
+        ui_712_set_title(key, strlen(key));
     }
     return true;
 }
