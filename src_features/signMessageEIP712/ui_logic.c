@@ -668,7 +668,7 @@ void ui_712_end_sign(void) {
  * Initializes the UI context structure in memory
  */
 bool ui_712_init(void) {
-    if ((ui_ctx = MEM_ALLOC_AND_ALIGN_TYPE(*ui_ctx))) {
+    if ((ui_ctx = app_mem_alloc(sizeof(*ui_ctx)))) {
         explicit_bzero(ui_ctx, sizeof(*ui_ctx));
         ui_ctx->filtering_mode = EIP712_FILTERING_BASIC;
         explicit_bzero(&strings, sizeof(strings));

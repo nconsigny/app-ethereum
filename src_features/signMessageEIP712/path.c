@@ -209,15 +209,25 @@ static bool feed_last_hash_depth(const uint8_t *const hash) {
  * @return whether the memory allocation of the hashing context was successful
  */
 static bool push_new_hash_depth(bool init) {
-    cx_sha3_t *hash_ctx;
+    s_hash_ctx *hash_ctx;
     cx_err_t error = CX_INTERNAL_ERROR;
 
     // allocate new hash context
-    if ((hash_ctx = MEM_ALLOC_AND_ALIGN_TYPE(*hash_ctx)) == NULL) {
+    if ((hash_ctx = app_mem_alloc(sizeof((*hash_ctx)))) == NULL) {
         return false;
     }
+    explicit_bzero(hash_ctx, sizeof(*hash_ctx));
     if (init) {
-        CX_CHECK(cx_keccak_init_no_throw(hash_ctx, 256));
+        CX_CHECK(cx_keccak_init_no_throw(&hash_ctx->hash, 256));
+    }
+
+    // add into list
+    if (g_hash_ctxs == NULL) {
+        g_hash_ctxs = hash_ctx;
+    } else {
+        s_hash_ctx *tmp;
+        for (tmp = g_hash_ctxs; tmp->next != NULL; tmp = tmp->next);
+        tmp->next = hash_ctx;
     }
     return true;
 end:
@@ -761,8 +771,8 @@ bool path_exists_in_backup(const char *path, size_t length) {
  */
 bool path_init(void) {
     if (path_struct == NULL) {
-        if (((path_struct = MEM_ALLOC_AND_ALIGN_TYPE(*path_struct)) == NULL) ||
-            ((path_backup = MEM_ALLOC_AND_ALIGN_TYPE(*path_backup)) == NULL)) {
+        if (((path_struct = app_mem_alloc(sizeof(*path_struct))) == NULL) ||
+            ((path_backup = app_mem_alloc(sizeof(*path_backup))) == NULL)) {
             apdu_response_code = APDU_RESPONSE_INSUFFICIENT_MEMORY;
         } else {
             explicit_bzero(path_struct, sizeof(*path_struct));

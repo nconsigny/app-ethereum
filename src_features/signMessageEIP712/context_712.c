@@ -20,7 +20,7 @@ s_eip712_context *eip712_context = NULL;
  */
 bool eip712_context_init(void) {
     // init global variables
-    if ((eip712_context = MEM_ALLOC_AND_ALIGN_TYPE(*eip712_context)) == NULL) {
+    if ((eip712_context = app_mem_alloc(sizeof(*eip712_context))) == NULL) {
         apdu_response_code = APDU_RESPONSE_INSUFFICIENT_MEMORY;
         return false;
     }

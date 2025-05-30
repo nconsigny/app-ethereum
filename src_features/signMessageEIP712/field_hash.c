@@ -21,7 +21,7 @@ static s_field_hashing *fh = NULL;
  */
 bool field_hash_init(void) {
     if (fh == NULL) {
-        if ((fh = MEM_ALLOC_AND_ALIGN_TYPE(*fh)) == NULL) {
+        if ((fh = app_mem_alloc(sizeof(*fh))) == NULL) {
             apdu_response_code = APDU_RESPONSE_INSUFFICIENT_MEMORY;
             return false;
         }
