@@ -33,7 +33,7 @@ const char *get_struct_field_typename(const s_struct_712_field *field_ptr) {
         return NULL;
     }
     if (field_ptr->type == TYPE_CUSTOM) {
-        return get_struct_field_custom_typename(field_ptr);
+        return field_ptr->type_name;
     }
     return get_struct_field_sol_typename(field_ptr);
 }

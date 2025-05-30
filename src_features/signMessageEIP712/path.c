@@ -448,25 +448,20 @@ bool path_set_root(const char *const struct_name, uint8_t name_length) {
  * @param[in] size requested array depth size
  * @return whether the checks and add were successful or not
  */
-static bool check_and_add_array_depth(const void *depth,
+static bool check_and_add_array_depth(s_struct_712_field_array_level *array_lvl,
                                       uint8_t total_count,
                                       uint8_t pidx,
                                       uint8_t size) {
-    uint8_t expected_size;
     uint8_t arr_idx;
-    e_array_type expected_type;
 
     arr_idx = (total_count - path_struct->array_depth_count) - 1;
     // we skip index 0, since we already have it
     for (uint8_t idx = 1; idx < (arr_idx + 1); ++idx) {
-        if ((depth = get_next_struct_field_array_lvl(depth)) == NULL) {
-            return false;
-        }
+        array_lvl++;
     }
-    expected_type = struct_field_array_depth(depth, &expected_size);
-    if ((expected_type == ARRAY_FIXED_SIZE) && (expected_size != size)) {
+    if ((array_lvl->type == ARRAY_FIXED_SIZE) && (array_lvl->size != size)) {
         apdu_response_code = APDU_RESPONSE_INVALID_DATA;
-        PRINTF("Unexpected array depth size. (expected %d, got %d)\n", expected_size, size);
+        PRINTF("Unexpected array depth size. (expected %d, got %d)\n", array_lvl->size, size);
         return false;
     }
     // add it
@@ -506,8 +501,6 @@ static void backup_path(void) {
  */
 bool path_new_array_depth(const uint8_t *data, uint8_t length) {
     const s_struct_712_field *field_ptr = NULL;
-    const void *depth = NULL;
-    uint8_t depth_count;
     uint8_t total_count = 0;
     uint8_t pidx;
     bool is_custom;
@@ -537,13 +530,13 @@ bool path_new_array_depth(const uint8_t *data, uint8_t length) {
             return false;
         }
         if (field_ptr->type_is_array) {
-            if ((depth = get_struct_field_array_lvls_array(field_ptr, &depth_count)) == NULL) {
+            if (field_ptr->array_levels == NULL) {
                 apdu_response_code = APDU_RESPONSE_CONDITION_NOT_SATISFIED;
                 return false;
             }
-            total_count += depth_count;
+            total_count += field_ptr->array_level_count;
             if (total_count > path_struct->array_depth_count) {
-                if (!check_and_add_array_depth(depth, total_count, pidx, array_size)) {
+                if (!check_and_add_array_depth(field_ptr->array_levels, total_count, pidx, array_size)) {
                     return false;
                 }
                 break;
@@ -740,7 +733,7 @@ bool path_exists_in_backup(const char *path, size_t length) {
         } else if (offset < length) {
             for (i = 0; ((offset + i) < length) && (path[offset + i] != '.'); ++i)
                 ;
-            typename = get_struct_field_custom_typename(field_ptr);
+            typename = field_ptr->type_name;
             if ((struct_ptr = get_structn(typename, strlen(typename))) == NULL) {
                 return false;
             }
