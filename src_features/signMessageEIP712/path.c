@@ -571,7 +571,12 @@ bool path_new_array_depth(const uint8_t *data, uint8_t length) {
     }
     if (is_custom) {
         cx_sha3_t *hash_ctx = get_last_hash_ctx();
-        cx_sha3_t *old_ctx = hash_ctx - 1;
+        cx_sha3_t *old_ctx;
+
+        // TODO: cleanup
+        for (s_hash_ctx *tmp = g_hash_ctxs; &tmp->hash != hash_ctx; tmp = tmp->next) {
+            old_ctx = &tmp->hash;
+        }
 
         if (array_size > 0) {
             memcpy(hash_ctx, old_ctx, sizeof(*old_ctx));
