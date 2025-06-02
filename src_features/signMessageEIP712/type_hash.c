@@ -107,8 +107,8 @@ static void sort_dependencies(s_struct_dep **deps) {
  * @param[in] struct_ptr pointer to the struct we are getting the dependencies of
  * @return pointer to the first found dependency, \ref NULL otherwise
  */
-static s_struct_dep *get_struct_dependencies(s_struct_dep *first_dep,
-                                             const s_struct_712 *struct_ptr) {
+static bool get_struct_dependencies(s_struct_dep **first_dep,
+                                    const s_struct_712 *struct_ptr) {
     const s_struct_712_field *field_ptr;
     const char *arg_structname;
     const s_struct_712 *arg_struct_ptr;
@@ -124,11 +124,11 @@ static s_struct_dep *get_struct_dependencies(s_struct_dep *first_dep,
                 PRINTF("Error: could not find EIP-712 dependency struct \"");
                 for (int i = 0; i < (int) strlen(arg_structname); ++i) PRINTF("%c", arg_structname[i]);
                 PRINTF("\" during type_hash\n");
-                return NULL;
+                return false;
             }
 
             // check if it is not already present in the dependencies array
-            for (tmp = first_dep; tmp != NULL; tmp = tmp->next) {
+            for (tmp = *first_dep; tmp != NULL; tmp = tmp->next) {
                 // it's a match!
                 if (tmp->s == arg_struct_ptr) {
                     break;
@@ -138,15 +138,15 @@ static s_struct_dep *get_struct_dependencies(s_struct_dep *first_dep,
             if (tmp == NULL) {
                 if ((new_dep = app_mem_alloc(sizeof(s_struct_dep))) == NULL) {
                     apdu_response_code = APDU_RESPONSE_INSUFFICIENT_MEMORY;
-                    return NULL;
+                    return false;
                 }
                 explicit_bzero(new_dep, sizeof(*new_dep));
                 new_dep->s = arg_struct_ptr;
-                if (first_dep == NULL) {
-                    first_dep = new_dep;
+                if (*first_dep == NULL) {
+                    *first_dep = new_dep;
                 } else {
                     // add to list
-                    for (tmp = first_dep; (tmp != NULL) && (tmp->next != NULL); tmp = tmp->next);
+                    for (tmp = *first_dep; (tmp != NULL) && (tmp->next != NULL); tmp = tmp->next);
                     tmp->next = new_dep;
                 }
                 // TODO: Move away from recursive calls
@@ -154,7 +154,7 @@ static s_struct_dep *get_struct_dependencies(s_struct_dep *first_dep,
             }
         }
     }
-    return first_dep;
+    return true;
 }
 
 /**
@@ -177,8 +177,8 @@ bool type_hash(const char *const struct_name, const uint8_t struct_name_length, 
         return false;
     }
     CX_CHECK(cx_keccak_init_no_throw(&global_sha3, 256));
-    deps = get_struct_dependencies(NULL, struct_ptr);
-    if (deps == NULL) {
+    deps = NULL;
+    if (!get_struct_dependencies(&deps, struct_ptr)) {
         return false;
     }
     sort_dependencies(&deps);
