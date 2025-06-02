@@ -45,6 +45,12 @@ static const void *get_nth_field_from(const s_path *path, uint8_t *fields_count_
         if ((field_ptr = struct_ptr->fields) == NULL) {
             return NULL;
         }
+        if (fields_count_ptr != NULL) {
+            *fields_count_ptr = 0;
+            for (const s_struct_712_field *tmp = field_ptr; tmp != NULL; tmp = tmp->next) {
+                *fields_count_ptr += 1;
+            }
+        }
 
         for (uint8_t index = 0; index < path->depths[depth]; ++index) {
             if ((field_ptr = field_ptr->next) == NULL) {
