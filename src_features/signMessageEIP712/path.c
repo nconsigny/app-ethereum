@@ -139,7 +139,7 @@ static bool path_depth_list_push(void) {
  *
  * @return pointer to the hashing context
  */
-static cx_sha3_t *get_last_hash_ctx(void) {
+cx_sha3_t *get_last_hash_ctx(void) {
     s_hash_ctx *hash_ctx = g_hash_ctxs;
 
     if (hash_ctx == NULL) return NULL;
