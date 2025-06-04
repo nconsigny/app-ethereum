@@ -36,7 +36,8 @@ static void hash_filtering_path(cx_hash_t *hash_ctx, bool discarded, uint32_t *p
     uint8_t path_len;
 
     if (discarded) {
-        path = ui_712_get_discarded_path(&path_len);
+        path = ui_712_get_discarded_path();
+        path_len = strlen(path);
         hash_nbytes((uint8_t *) path, path_len, hash_ctx);
         *path_crc = cx_crc32_update(*path_crc, path, path_len);
     } else {
@@ -63,7 +64,7 @@ static void hash_filtering_path(cx_hash_t *hash_ctx, bool discarded, uint32_t *p
         }
     }
     // so it is only usable for the following filter
-    ui_712_set_discarded_path("", 0);
+    ui_712_clear_discarded_path();
 }
 
 /**

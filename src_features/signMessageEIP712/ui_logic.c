@@ -54,8 +54,7 @@ typedef struct {
     s_amount_context amount;
     uint8_t filters_received;
     uint32_t filters_crc[MAX_FILTERS];
-    uint8_t discarded_path_length;
-    char discarded_path[255];
+    char *discarded_path;
     uint8_t tn_type_count;
     uint8_t tn_source_count;
     e_name_type tn_types[TN_TYPE_COUNT];
@@ -869,21 +868,34 @@ bool ui_712_push_new_filter_path(uint32_t path_crc) {
  *
  * @param[in] path the given filter path
  * @param[in] length the path length
+ * @return whether it was successful or not
  */
-void ui_712_set_discarded_path(const char *path, uint8_t length) {
+bool ui_712_set_discarded_path(const char *path, uint8_t length) {
+    if (ui_ctx->discarded_path != NULL) {
+        return false;
+    }
+    if ((ui_ctx->discarded_path = app_mem_alloc(length + 1)) == NULL) {
+        return false;
+    }
     memcpy(ui_ctx->discarded_path, path, length);
-    ui_ctx->discarded_path_length = length;
+    ui_ctx->discarded_path[length] = '\0';
+    return true;
 }
 
 /**
  * Get the discarded filter path
  *
- * @param[out] length the path length
  * @return filter path
  */
-const char *ui_712_get_discarded_path(uint8_t *length) {
-    *length = ui_ctx->discarded_path_length;
+const char *ui_712_get_discarded_path(void) {
     return ui_ctx->discarded_path;
+}
+
+void ui_712_clear_discarded_path(void) {
+    if (ui_ctx->discarded_path != NULL) {
+        app_mem_free(ui_ctx->discarded_path);
+        ui_ctx->discarded_path = NULL;
+    }
 }
 
 void ui_712_set_trusted_name_requirements(uint8_t type_count,

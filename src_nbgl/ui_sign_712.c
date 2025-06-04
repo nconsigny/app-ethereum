@@ -13,7 +13,7 @@ static size_t buf_idx;
 static bool review_skipped;
 static bool hash_displayed;
 
-nbgl_callback_t skip_callback = NULL;
+static nbgl_callback_t skip_callback = NULL;
 
 static void message_progress(bool confirm) {
     char *buf;

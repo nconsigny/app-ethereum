@@ -47,8 +47,9 @@ void ui_712_token_join_prepare_amount(uint8_t index, const char *name, uint8_t n
 void amount_join_set_token_received(void);
 bool ui_712_show_raw_key(const s_struct_712_field *field_ptr);
 bool ui_712_push_new_filter_path(uint32_t path_crc);
-void ui_712_set_discarded_path(const char *path, uint8_t length);
-const char *ui_712_get_discarded_path(uint8_t *length);
+bool ui_712_set_discarded_path(const char *path, uint8_t length);
+const char *ui_712_get_discarded_path(void);
+void ui_712_clear_discarded_path(void);
 void ui_712_set_trusted_name_requirements(uint8_t type_count,
                                           const e_name_type *types,
                                           uint8_t source_count,
