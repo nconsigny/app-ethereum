@@ -73,7 +73,7 @@ end:
  * @return pointer to the encoded value
  */
 static const uint8_t *field_hash_finalize_static(const s_struct_712_field *field_ptr,
-                                                 const uint8_t *const data,
+                                                 const uint8_t *data,
                                                  uint8_t data_length) {
     uint8_t *value = NULL;
 
@@ -163,7 +163,7 @@ static void field_hash_feed_parent(e_type field_type, const uint8_t *hash) {
  * @return whether an error occurred or not
  */
 static bool field_hash_domain_special_fields(const s_struct_712_field *field_ptr,
-                                             const uint8_t *const data,
+                                             const uint8_t *data,
                                              uint8_t data_length) {
     const char *key;
     const char *ethermint_vc = "cosmos";
@@ -212,7 +212,7 @@ static bool field_hash_domain_special_fields(const s_struct_712_field *field_ptr
  * @return whether an error occurred or not
  */
 static bool field_hash_finalize(const s_struct_712_field *field_ptr,
-                                const uint8_t *const data,
+                                const uint8_t *data,
                                 uint8_t data_length) {
     const uint8_t *value = NULL;
 
