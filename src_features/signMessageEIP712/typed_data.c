@@ -188,34 +188,29 @@ uint8_t get_struct_field_typesize(const uint8_t *const field_ptr) {
  * Get custom type name from a struct field
  *
  * @param[in] field_ptr struct field pointer
- * @param[out] length the type name length
  * @return type name pointer
  */
-const char *get_struct_field_custom_typename(const uint8_t *field_ptr, uint8_t *const length) {
-    const uint8_t *ptr;
-
+const char *get_struct_field_custom_typename(const s_struct_712_field *field_ptr) {
     if (field_ptr == NULL) {
         return NULL;
     }
-    ptr = field_skip_typedesc(field_ptr, NULL);
-    return get_string_in_mem(ptr, length);
+    return field_ptr->type_name;
 }
 
 /**
  * Get type name from a struct field
  *
  * @param[in] field_ptr struct field pointer
- * @param[out] length the type name length
  * @return type name pointer
  */
-const char *get_struct_field_typename(const uint8_t *field_ptr, uint8_t *const length) {
+const char *get_struct_field_typename(const s_struct_712_field *field_ptr) {
     if (field_ptr == NULL) {
         return NULL;
     }
-    if (struct_field_type(field_ptr) == TYPE_CUSTOM) {
-        return get_struct_field_custom_typename(field_ptr, length);
+    if (field_ptr->type == TYPE_CUSTOM) {
+        return get_struct_field_custom_typename(field_ptr);
     }
-    return get_struct_field_sol_typename(field_ptr, length);
+    return get_struct_field_sol_typename(field_ptr);
 }
 
 /**
@@ -396,6 +391,10 @@ const uint8_t *get_structs_array(uint8_t *const length) {
     // TODO
     (void) length;
     return NULL;
+}
+
+const s_struct_712 *get_struct_list(void) {
+    return g_structs;
 }
 
 /**

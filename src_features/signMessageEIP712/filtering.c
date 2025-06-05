@@ -159,7 +159,8 @@ static bool check_typename(const char *expected) {
     uint8_t typename_len = 0;
     const char *typename;
 
-    typename = get_struct_field_typename(path_get_field(), &typename_len);
+    typename = get_struct_field_typename(path_get_field());
+    typename_len = strlen(typename);
     if ((typename_len != strlen(expected)) || (strncmp(typename, expected, typename_len) != 0)) {
         PRINTF("Error: expected field of type \"%s\" but got \"", expected);
         for (int i = 0; i < typename_len; ++i) PRINTF("%c", typename[i]);

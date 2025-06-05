@@ -63,16 +63,11 @@ bool sol_typenames_init(void) {
  * Get typename from a given field
  *
  * @param[in] field_ptr pointer to a struct field
- * @param[out] length length of the returned typename
  * @return typename or \ref NULL in case it wasn't found
  */
-const char *get_struct_field_sol_typename(const uint8_t *field_ptr, uint8_t *const length) {
-    e_type field_type;
-
-    field_type = struct_field_type(field_ptr);
+const char *get_struct_field_sol_typename(const s_struct_712_field *field_ptr) {
     for (int i = 0; i < (TYPES_COUNT - 1); ++i) {
-        if (field_type == g_sol_types[i].value) {
-            *length = strlen(g_sol_types[i].name);
+        if (field_ptr->type == g_sol_types[i].value) {
             return g_sol_types[i].name;
         }
     }

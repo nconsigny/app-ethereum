@@ -112,7 +112,6 @@ static const void **get_struct_dependencies(uint8_t *const deps_count,
     uint8_t fields_count;
     const void *field_ptr;
     const char *arg_structname;
-    uint8_t arg_structname_length;
     const void *arg_struct_ptr;
     size_t dep_idx;
     const void **new_dep;
@@ -121,11 +120,11 @@ static const void **get_struct_dependencies(uint8_t *const deps_count,
     for (uint8_t idx = 0; idx < fields_count; ++idx) {
         if (struct_field_type(field_ptr) == TYPE_CUSTOM) {
             // get struct name
-            arg_structname = get_struct_field_typename(field_ptr, &arg_structname_length);
+            arg_structname = get_struct_field_typename(field_ptr);
             // from its name, get the pointer to its definition
-            if ((arg_struct_ptr = get_structn(arg_structname, arg_structname_length)) == NULL) {
+            if ((arg_struct_ptr = get_structn(arg_structname, strlen(arg_structname))) == NULL) {
                 PRINTF("Error: could not find EIP-712 dependency struct \"");
-                for (int i = 0; i < arg_structname_length; ++i) PRINTF("%c", arg_structname[i]);
+                for (int i = 0; i < (int) strlen(arg_structname); ++i) PRINTF("%c", arg_structname[i]);
                 PRINTF("\" during type_hash\n");
                 return NULL;
             }

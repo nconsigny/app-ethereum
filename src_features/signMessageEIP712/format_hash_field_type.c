@@ -86,23 +86,22 @@ static bool format_hash_field_type_array_levels(const void *const field_ptr, cx_
  * @param[in] hash_ctx pointer to the hashing context
  * @return whether the formatting & hashing were successful or not
  */
-bool format_hash_field_type(const void *const field_ptr, cx_hash_t *hash_ctx) {
+bool format_hash_field_type(const s_struct_712_field *field_ptr, cx_hash_t *hash_ctx) {
     const char *name;
-    uint8_t length;
 
     // field type name
-    name = get_struct_field_typename(field_ptr, &length);
-    hash_nbytes((uint8_t *) name, length, hash_ctx);
+    name = get_struct_field_typename(field_ptr);
+    hash_nbytes((uint8_t *) name, strlen(name), hash_ctx);
 
     // field type size
-    if (struct_field_has_typesize(field_ptr)) {
+    if (field_ptr->type_has_size) {
         if (!format_hash_field_type_size(field_ptr, hash_ctx)) {
             return false;
         }
     }
 
     // field type array levels
-    if (struct_field_is_array(field_ptr)) {
+    if (field_ptr->type_is_array) {
         if (!format_hash_field_type_array_levels(field_ptr, hash_ctx)) {
             return false;
         }

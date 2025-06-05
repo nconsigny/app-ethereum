@@ -30,7 +30,6 @@ static const void *get_nth_field_from(const s_path *path, uint8_t *fields_count_
     const void *struct_ptr = NULL;
     const void *field_ptr = NULL;
     const char *typename;
-    uint8_t length;
     uint8_t fields_count;
 
     if (path == NULL) {
@@ -58,8 +57,8 @@ static const void *get_nth_field_from(const s_path *path, uint8_t *fields_count_
             field_ptr = get_next_struct_field(field_ptr);
         }
         if (struct_field_type(field_ptr) == TYPE_CUSTOM) {
-            typename = get_struct_field_typename(field_ptr, &length);
-            if ((struct_ptr = get_structn(typename, length)) == NULL) {
+            typename = get_struct_field_typename(field_ptr);
+            if ((struct_ptr = get_structn(typename, strlen(typename))) == NULL) {
                 return NULL;
             }
         }
@@ -103,14 +102,13 @@ const void *path_backup_get_nth_field(uint8_t n) {
  */
 const void *path_get_nth_field_to_last(uint8_t n) {
     const char *typename;
-    uint8_t typename_len;
     const void *field_ptr;
     const void *struct_ptr = NULL;
 
     field_ptr = get_nth_field(NULL, path_struct->depth_count - n);
     if (field_ptr != NULL) {
-        typename = get_struct_field_typename(field_ptr, &typename_len);
-        struct_ptr = get_structn(typename, typename_len);
+        typename = get_struct_field_typename(field_ptr);
+        struct_ptr = get_structn(typename, strlen(typename));
     }
     return struct_ptr;
 }
@@ -337,7 +335,6 @@ static bool path_update(bool skip_if_array, bool stop_at_array, bool do_typehash
     const void *starting_field_ptr;
     const void *field_ptr;
     const char *typename;
-    uint8_t typename_len;
     uint8_t hash[KECCAK256_HASH_BYTESIZE];
 
     if (path_struct == NULL) {
@@ -357,8 +354,8 @@ static bool path_update(bool skip_if_array, bool stop_at_array, bool do_typehash
                 break;
             }
         }
-        typename = get_struct_field_typename(field_ptr, &typename_len);
-        if ((struct_ptr = get_structn(typename, typename_len)) == NULL) {
+        typename = get_struct_field_typename(field_ptr);
+        if ((struct_ptr = get_structn(typename, strlen(typename))) == NULL) {
             return false;
         }
         if ((field_ptr = get_struct_fields_array(struct_ptr, &fields_count)) == NULL) {
@@ -371,7 +368,7 @@ static bool path_update(bool skip_if_array, bool stop_at_array, bool do_typehash
 
         if (do_typehash) {
             // get the struct typehash
-            if (type_hash(typename, typename_len, hash) == false) {
+            if (type_hash(typename, strlen(typename), hash) == false) {
                 return false;
             }
             if (feed_last_hash_depth(hash) == false) {
@@ -732,7 +729,6 @@ bool path_exists_in_backup(const char *path, size_t length) {
     size_t i;
     const void *field_ptr;
     const char *typename;
-    uint8_t typename_len;
     const void *struct_ptr;
     uint8_t fields_count;
     const char *key;
@@ -752,8 +748,8 @@ bool path_exists_in_backup(const char *path, size_t length) {
         } else if (offset < length) {
             for (i = 0; ((offset + i) < length) && (path[offset + i] != '.'); ++i)
                 ;
-            typename = get_struct_field_custom_typename(field_ptr, &typename_len);
-            if ((struct_ptr = get_structn(typename, typename_len)) == NULL) {
+            typename = get_struct_field_custom_typename(field_ptr);
+            if ((struct_ptr = get_structn(typename, strlen(typename))) == NULL) {
                 return false;
             }
             field_ptr = get_struct_fields_array(struct_ptr, &fields_count);
