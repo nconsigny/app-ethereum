@@ -44,6 +44,11 @@ typedef struct {
     e_amount_join_state state;
 } s_amount_context;
 
+typedef struct filter_crc {
+    uint32_t value;
+    struct filter_crc *next;
+} s_filter_crc;
+
 typedef struct {
     bool shown;
     bool end_reached;
@@ -52,8 +57,7 @@ typedef struct {
     uint8_t field_flags;
     uint8_t structs_to_review;
     s_amount_context amount;
-    uint8_t filters_received;
-    uint32_t filters_crc[MAX_FILTERS];
+    s_filter_crc *filters_crc;
     char *discarded_path;
     uint8_t tn_type_count;
     uint8_t tn_source_count;
@@ -773,7 +777,10 @@ void ui_712_set_filters_count(uint8_t count) {
  * @return number of filters
  */
 uint8_t ui_712_remaining_filters(void) {
-    return ui_ctx->filters_to_process - ui_ctx->filters_received;
+    uint8_t filter_count = 0;
+
+    for (const s_filter_crc *tmp = ui_ctx->filters_crc; tmp != NULL; tmp = tmp->next) filter_count += 1;
+    return ui_ctx->filters_to_process - filter_count;
 }
 
 /**
@@ -796,19 +803,6 @@ void ui_712_queue_struct_to_review(void) {
 #endif
         ui_ctx->structs_to_review += 1;
     }
-}
-
-/**
- * Increment the filters counter
- *
- * @return if the counter could be incremented
- */
-bool ui_712_filters_counter_incr(void) {
-    if (ui_ctx->filters_received > ui_ctx->filters_to_process) {
-        return false;
-    }
-    ui_ctx->filters_received += 1;
-    return true;
 }
 
 void ui_712_token_join_prepare_addr_check(uint8_t index) {
@@ -848,18 +842,42 @@ bool ui_712_show_raw_key(const s_struct_712_field *field_ptr) {
  * Push a new filter path
  *
  * @param[in] path_crc CRC of the filter path
- * @return if the path was pushed or not (in case it was already present)
+ * @return whether it was successful or not
  */
 bool ui_712_push_new_filter_path(uint32_t path_crc) {
+    s_filter_crc *tmp;
+    s_filter_crc *new_crc;
+    uint8_t filter_count = 0;
+
     // check if already present
-    for (int i = 0; i < ui_ctx->filters_received; ++i) {
-        if (ui_ctx->filters_crc[i] == path_crc) {
-            PRINTF("EIP-712 path CRC (%x) already found at index %u!\n", path_crc, i);
-            return false;
+    for (tmp = ui_ctx->filters_crc; tmp != NULL; tmp = tmp->next) {
+        if (tmp->value == path_crc) {
+            PRINTF("EIP-712 path CRC (%x) already found!\n", path_crc);
+            return true;
         }
+        filter_count += 1;
     }
-    PRINTF("Pushing new EIP-712 path CRC (%x) at index %u\n", path_crc, ui_ctx->filters_received);
-    ui_ctx->filters_crc[ui_ctx->filters_received] = path_crc;
+
+    if (filter_count >= ui_ctx->filters_to_process) {
+        apdu_response_code = APDU_RESPONSE_INVALID_DATA;
+        return false;
+    }
+    // allocate it
+    if ((new_crc = app_mem_alloc(sizeof(*new_crc))) == NULL) {
+        apdu_response_code = APDU_RESPONSE_INSUFFICIENT_MEMORY;
+        return false;
+    }
+    explicit_bzero(new_crc, sizeof(*new_crc));
+    new_crc->value = path_crc;
+
+    PRINTF("Pushing new EIP-712 path CRC (%x)\n", path_crc);
+    // add to list
+    if (ui_ctx->filters_crc == NULL) {
+        ui_ctx->filters_crc = new_crc;
+    } else {
+        for (tmp = ui_ctx->filters_crc; tmp->next != NULL; tmp = tmp->next);
+        tmp->next = new_crc;
+    }
     return true;
 }
 

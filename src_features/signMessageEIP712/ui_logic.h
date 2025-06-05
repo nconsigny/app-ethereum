@@ -41,7 +41,6 @@ e_eip712_filtering_mode ui_712_get_filtering_mode(void);
 void ui_712_set_filters_count(uint8_t count);
 uint8_t ui_712_remaining_filters(void);
 void ui_712_queue_struct_to_review(void);
-bool ui_712_filters_counter_incr(void);
 void ui_712_token_join_prepare_addr_check(uint8_t index);
 void ui_712_token_join_prepare_amount(uint8_t index, const char *name, uint8_t name_length);
 void amount_join_set_token_received(void);
