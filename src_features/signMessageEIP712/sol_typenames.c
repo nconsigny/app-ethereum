@@ -25,7 +25,7 @@ bool sol_typenames_init(void) {
         apdu_response_code = APDU_RESPONSE_INSUFFICIENT_MEMORY;
         return false;
     }
-    for (int i = 1; i < count; ++i) {
+    for (int i = 0; i < count; ++i) {
         g_sol_types[i].value = i + 1;
         switch (g_sol_types[i].value) {
             case TYPE_SOL_INT:
