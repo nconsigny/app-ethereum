@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "ux.h"
 #include "uint256.h"
@@ -12,6 +13,12 @@ typedef enum {
     EIP712_FIELD_INCOMING,
     EIP712_NO_MORE_FIELD
 } e_eip712_nfs;  // next field state
+
+typedef struct ui_712_pair {
+    char *key;
+    char *value;
+    struct ui_712_pair *next;
+} s_ui_712_pair;
 
 bool ui_712_init(void);
 void ui_712_deinit(void);
@@ -53,4 +60,6 @@ void ui_712_set_trusted_name_requirements(uint8_t type_count,
                                           const e_name_type *types,
                                           uint8_t source_count,
                                           const e_name_source *sources);
-char *get_ui_pairs_buffer(size_t *size);
+const s_ui_712_pair *ui_712_get_pairs(void);
+bool ui_712_push_new_pair(const char *key, const char *value);
+void ui_712_delete_pairs(size_t keep);

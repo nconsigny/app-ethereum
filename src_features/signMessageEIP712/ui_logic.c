@@ -63,7 +63,7 @@ typedef struct {
     uint8_t tn_source_count;
     e_name_type tn_types[TN_TYPE_COUNT];
     e_name_source tn_sources[TN_SOURCE_COUNT];
-    char ui_pairs_buffer[(SHARED_CTX_FIELD_1_SIZE + SHARED_CTX_FIELD_2_SIZE) * 2];
+    s_ui_712_pair *ui_pairs;
 } t_ui_context;
 
 static t_ui_context *ui_ctx = NULL;
@@ -926,13 +926,53 @@ void ui_712_set_trusted_name_requirements(uint8_t type_count,
     memcpy(ui_ctx->tn_sources, sources, source_count);
 }
 
-/*
- * Get UI pairs buffer
- *
- * @param[out] size buffer size
- * @return pointer to the buffer
- */
-char *get_ui_pairs_buffer(size_t *size) {
-    *size = sizeof(ui_ctx->ui_pairs_buffer);
-    return ui_ctx->ui_pairs_buffer;
+const s_ui_712_pair *ui_712_get_pairs(void) {
+    return ui_ctx->ui_pairs;
+}
+
+bool ui_712_push_new_pair(const char *key, const char *value) {
+    s_ui_712_pair *new_pair;
+    s_ui_712_pair *tmp;
+
+    // allocate pair
+    if ((new_pair = app_mem_alloc(sizeof(*new_pair))) == NULL) {
+        return false;
+    }
+    explicit_bzero(new_pair, sizeof(*new_pair));
+
+    // insert
+    if (ui_ctx->ui_pairs == NULL) {
+        ui_ctx->ui_pairs = new_pair;
+    } else {
+        for (tmp = ui_ctx->ui_pairs; tmp->next != NULL; tmp = tmp->next);
+        tmp->next = new_pair;
+    }
+
+    if ((new_pair->key = app_mem_strdup(key)) == NULL) {
+        return false;
+    }
+
+    if ((new_pair->value = app_mem_strdup(value)) == NULL) {
+        return false;
+    }
+    return true;
+}
+
+void ui_712_delete_pairs(size_t keep) {
+    s_ui_712_pair *node;
+    s_ui_712_pair *next;
+    size_t size = 0;
+
+    for (const s_ui_712_pair *tmp = ui_ctx->ui_pairs; tmp != NULL; tmp = tmp->next) size += 1;
+    if (size > 0) {
+        for (node = ui_ctx->ui_pairs; node != NULL; node = next) {
+            if (size == keep) break;
+            next = node->next;
+            if (node->key != NULL) app_mem_free(node->key);
+            if (node->value != NULL) app_mem_free(node->value);
+            app_mem_free(node);
+            size -= 1;
+        }
+        ui_ctx->ui_pairs = node;
+    }
 }
