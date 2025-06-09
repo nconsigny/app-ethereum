@@ -616,14 +616,15 @@ bool filtering_amount_join_value(const uint8_t *payload,
         token_idx = (uint8_t) resolved_idx;
         // simulate as if we had received a token-join addr
         ui_712_token_join_prepare_addr_check(token_idx);
-        amount_join_set_token_received();
+        if (!amount_join_set_token_received()) {
+            return false;
+        }
     }
     if (!check_typename("uint") || !check_token_index(token_idx)) {
         return false;
     }
     ui_712_flag_field(false, false, true, false, false);
-    ui_712_token_join_prepare_amount(token_idx, name, name_len);
-    return true;
+    return ui_712_token_join_prepare_amount(token_idx, name, name_len);
 }
 
 /**
