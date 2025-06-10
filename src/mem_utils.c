@@ -63,3 +63,13 @@ void *mem_legacy_alloc_and_align(size_t size, size_t alignment) {
     mem_legacy_align(alignment);
     return mem_legacy_alloc(size);
 }
+
+char *app_mem_strdup(const char *src) {
+    char *dst;
+    size_t length = strlen(src) + 1;
+
+    if ((dst = app_mem_alloc(length)) != NULL) {
+        memcpy(dst, src, length);
+    }
+    return dst;
+}
