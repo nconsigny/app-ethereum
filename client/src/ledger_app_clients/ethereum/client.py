@@ -8,8 +8,6 @@ from eth_utils import keccak
 from ragger.backend import BackendInterface
 from ragger.utils import RAPDU
 
-from dynamic_networks import DynamicNetwork
-
 from .command_builder import CommandBuilder
 from .eip712 import EIP712FieldType
 from .keychain import sign_data, Key
@@ -386,16 +384,15 @@ class EthAppClient:
                                                                                 chain_id,
                                                                                 sig))
 
-    def provide_network_information(self, network_params: DynamicNetwork) -> None:
+    def provide_network_information(self,
+                                    tlv_payload: bytes,
+                                    icon: Optional[bytes] = None) -> None:
 
-        if not network_params.name or not network_params.ticker:
-            return
         # Send ledgerPKI certificate
         self.pki_client.send_certificate(PKIPubKeyUsage.PUBKEY_USAGE_NETWORK)
 
         # Add the network info
-        chunks = self._cmd_builder.provide_network_information(network_params.serialize(),
-                                                               network_params.icon)
+        chunks = self._cmd_builder.provide_network_information(tlv_payload, icon)
         for chunk in chunks[:-1]:
             response = self._exchange(chunk)
             assert response.status == StatusWord.OK
