@@ -2,6 +2,7 @@ from typing import Dict, TypedDict, Optional
 from hashlib import sha256
 from ledgered.devices import Device, DeviceType
 
+from client.client import EthAppClient
 from client.tlv import TlvSerializable, FieldTag
 from client.keychain import sign_data, Key
 
@@ -92,3 +93,11 @@ class DynamicNetwork(TlvSerializable):
         # Append the data Signature
         payload += self.serialize_field(FieldTag.DER_SIGNATURE, sign_data(Key.NETWORK, payload))
         return payload
+
+    def send_network_information(self, app_client: EthAppClient) -> None:
+
+        if not self.name or not self.ticker:
+            return
+
+        # Add the network info
+        app_client.provide_network_information(self.serialize(), self.icon)
