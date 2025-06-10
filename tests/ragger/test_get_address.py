@@ -57,7 +57,8 @@ def test_get_pk(scenario_navigator: NavigateWithScenario,
     app_client = EthAppClient(backend)
 
     # Send Network information (name, ticker, icon)
-    app_client.provide_network_information(DynamicNetwork(backend.device, chain))
+    dyn_network = DynamicNetwork(backend.device, chain)
+    dyn_network.send_network_information(app_client)
 
     test_name += f"_{chain}"
     with app_client.get_public_addr(chaincode=with_chaincode, chain_id=chain):

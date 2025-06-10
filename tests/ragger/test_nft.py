@@ -79,7 +79,8 @@ def common_test_nft(scenario_navigator: NavigateWithScenario,
         assert response.status == StatusWord.OK
 
     # Send Network information (name, ticker, icon)
-    app_client.provide_network_information(DynamicNetwork(backend.device, collec.chain_id))
+    dyn_network = DynamicNetwork(backend.device, collec.chain_id)
+    dyn_network.send_network_information(app_client)
 
     if DEVICE_ADDR is None:  # to only have to request it once
         with app_client.get_public_addr(display=False):

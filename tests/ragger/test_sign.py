@@ -46,7 +46,8 @@ def common(scenario_navigator: NavigateWithScenario,
     app_client = EthAppClient(backend)
 
     # Send Network information (name, ticker, icon)
-    app_client.provide_network_information(DynamicNetwork(backend.device, tx_params["chainId"]))
+    dyn_network = DynamicNetwork(backend.device, tx_params["chainId"])
+    dyn_network.send_network_information(app_client)
 
     with app_client.get_public_addr(bip32_path=path, display=False):
         pass

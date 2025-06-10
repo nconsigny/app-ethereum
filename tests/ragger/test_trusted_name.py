@@ -144,7 +144,8 @@ def test_trusted_name_v1_non_mainnet(scenario_navigator: NavigateWithScenario, t
     }
 
     # Send Network information (name, ticker, icon)
-    app_client.provide_network_information(DynamicNetwork(backend.device, tx_params["chainId"]))
+    dyn_network = DynamicNetwork(backend.device, tx_params["chainId"])
+    dyn_network.send_network_information(app_client)
 
     app_client.provide_trusted_name_v1(ADDR, NAME, challenge)
 
