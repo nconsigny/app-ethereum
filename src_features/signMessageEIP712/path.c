@@ -7,13 +7,14 @@
 #include "mem_utils.h"
 #include "apdu_constants.h"  // APDU response codes
 #include "typed_data.h"
+#include "list.h"
 
 static s_path *path_struct = NULL;
 static s_path *path_backup = NULL;
 
-typedef struct hash_ctx {
+typedef struct {
+    s_flist_node _list;
     cx_sha3_t hash;
-    struct hash_ctx *next;
 } s_hash_ctx;
 
 static s_hash_ctx *g_hash_ctxs = NULL;
@@ -146,27 +147,19 @@ static bool path_depth_list_push(void) {
  * @return pointer to the hashing context
  */
 cx_sha3_t *get_last_hash_ctx(void) {
-    s_hash_ctx *hash_ctx = g_hash_ctxs;
+    s_flist_node *hash_ctx = (s_flist_node *) g_hash_ctxs;
 
     if (hash_ctx == NULL) return NULL;
     for (; hash_ctx->next != NULL; hash_ctx = hash_ctx->next);
-    return &hash_ctx->hash;
+    return &((s_hash_ctx *) hash_ctx)->hash;
+}
+
+static void delete_hash_ctx(s_hash_ctx *ctx) {
+    app_mem_free(ctx);
 }
 
 static void remove_last_hash_ctx(void) {
-    s_hash_ctx *tmp;
-
-    if (g_hash_ctxs != NULL) {
-        if (g_hash_ctxs->next == NULL) {
-            // only element
-            app_mem_free(g_hash_ctxs);
-            g_hash_ctxs = NULL;
-        } else {
-            for (tmp = g_hash_ctxs; tmp->next->next != NULL; tmp = tmp->next);
-            app_mem_free(tmp->next);
-            tmp->next = NULL;
-        }
-    }
+    flist_pop_back((s_flist_node **) &g_hash_ctxs, (f_list_node_del) &delete_hash_ctx);
 }
 
 /**
@@ -227,14 +220,7 @@ static bool push_new_hash_depth(bool init) {
         CX_CHECK(cx_keccak_init_no_throw(&hash_ctx->hash, 256));
     }
 
-    // add into list
-    if (g_hash_ctxs == NULL) {
-        g_hash_ctxs = hash_ctx;
-    } else {
-        s_hash_ctx *tmp;
-        for (tmp = g_hash_ctxs; tmp->next != NULL; tmp = tmp->next);
-        tmp->next = hash_ctx;
-    }
+    flist_push_back((s_flist_node **) &g_hash_ctxs, (s_flist_node *) hash_ctx);
     return true;
 end:
     return false;
@@ -574,7 +560,7 @@ bool path_new_array_depth(const uint8_t *data, uint8_t length) {
         cx_sha3_t *old_ctx;
 
         // TODO: cleanup
-        for (s_hash_ctx *tmp = g_hash_ctxs; &tmp->hash != hash_ctx; tmp = tmp->next) {
+        for (s_hash_ctx *tmp = g_hash_ctxs; &tmp->hash != hash_ctx; tmp = (s_hash_ctx *) ((s_flist_node *) tmp)->next) {
             old_ctx = &tmp->hash;
         }
 
