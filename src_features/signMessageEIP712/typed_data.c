@@ -56,7 +56,7 @@ const s_struct_712 *get_structn(const char *name, uint8_t length) {
         apdu_response_code = APDU_RESPONSE_CONDITION_NOT_SATISFIED;
         return NULL;
     }
-    for (struct_ptr = get_struct_list(); struct_ptr != NULL; struct_ptr = struct_ptr->next) {
+    for (struct_ptr = get_struct_list(); struct_ptr != NULL; struct_ptr = (s_struct_712 *) ((s_flist_node *) struct_ptr)->next) {
         if (struct_ptr->name != NULL) {
             if ((length == strlen(struct_ptr->name)) && (memcmp(name, struct_ptr->name, length) == 0)) {
                 return struct_ptr;
@@ -97,14 +97,7 @@ bool set_struct_name(uint8_t length, const uint8_t *name) {
     memmove(new_struct->name, name, length);
     struct_state = INITIALIZED;
 
-    // insert into linked list
-    if (g_structs == NULL) {
-        g_structs = new_struct;
-    } else {
-        s_struct_712 *s;
-        for (s = g_structs; s->next != NULL; s = s->next);
-        s->next = new_struct;
-    }
+    flist_push_back((s_flist_node **) &g_structs, (s_flist_node *) new_struct);
     return true;
 }
 
@@ -343,15 +336,8 @@ bool set_struct_field(uint8_t length, const uint8_t *data) {
 
     // get last struct
     s_struct_712 *s;
-    for (s = g_structs; s->next != NULL; s = s->next);
+    for (s = g_structs; (s_struct_712 *) ((s_flist_node *) s)->next != NULL; s = (s_struct_712 *) ((s_flist_node *) s)->next);
 
-    // insert into linked list
-    if (s->fields == NULL) {
-        s->fields = new_field;
-    } else {
-        s_struct_712_field *field;
-        for (field = s->fields; field->next != NULL; field = field->next);
-        field->next = new_field;
-    }
+    flist_push_back((s_flist_node **) &s->fields, (s_flist_node *) new_field);
     return true;
 }

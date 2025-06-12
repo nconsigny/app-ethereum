@@ -40,16 +40,16 @@ bool compute_schema_hash(void) {
                 return false;
             }
             hash_nbytes((uint8_t *) "\"}", 2, (cx_hash_t *) &hash_ctx);
-            if (field_ptr->next != NULL) {
+            if (((s_flist_node *) field_ptr)->next != NULL) {
                 hash_byte(',', (cx_hash_t *) &hash_ctx);
             }
-            field_ptr = field_ptr->next;
+            field_ptr = (s_struct_712_field *) ((s_flist_node *) field_ptr)->next;
         }
         hash_byte(']', (cx_hash_t *) &hash_ctx);
-        if (struct_ptr->next != NULL) {
+        if (((s_flist_node *) struct_ptr)->next != NULL) {
             hash_byte(',', (cx_hash_t *) &hash_ctx);
         }
-        struct_ptr = struct_ptr->next;
+        struct_ptr = (s_struct_712 *) ((s_flist_node *) struct_ptr)->next;
     }
     hash_byte('}', (cx_hash_t *) &hash_ctx);
 

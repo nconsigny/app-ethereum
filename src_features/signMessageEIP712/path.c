@@ -48,13 +48,13 @@ static const void *get_nth_field_from(const s_path *path, uint8_t *fields_count_
         }
         if (fields_count_ptr != NULL) {
             *fields_count_ptr = 0;
-            for (const s_struct_712_field *tmp = field_ptr; tmp != NULL; tmp = tmp->next) {
+            for (const s_struct_712_field *tmp = field_ptr; tmp != NULL; tmp = (s_struct_712_field *) ((s_flist_node *) tmp)->next) {
                 *fields_count_ptr += 1;
             }
         }
 
         for (uint8_t index = 0; index < path->depths[depth]; ++index) {
-            if ((field_ptr = field_ptr->next) == NULL) {
+            if ((field_ptr = (s_struct_712_field *) ((s_flist_node *) field_ptr)->next) == NULL) {
                 return NULL;
             }
         }
@@ -744,7 +744,7 @@ bool path_exists_in_backup(const char *path, size_t length) {
             if ((struct_ptr = get_structn(typename, strlen(typename))) == NULL) {
                 return false;
             }
-            for (field_ptr = struct_ptr->fields; field_ptr != NULL; field_ptr = field_ptr->next) {
+            for (field_ptr = struct_ptr->fields; field_ptr != NULL; field_ptr = (s_struct_712_field *) ((s_flist_node *) field_ptr)->next) {
                 key = field_ptr->key_name;
                 if ((strlen(key) == i) && (memcmp(key, path + offset, i) == 0)) {
                     break;

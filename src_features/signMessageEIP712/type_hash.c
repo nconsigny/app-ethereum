@@ -45,7 +45,7 @@ static bool encode_and_hash_type(const s_struct_712 *struct_ptr) {
     // opening struct parentheses
     hash_byte('(', (cx_hash_t *) &global_sha3);
 
-    for (field_ptr = struct_ptr->fields; field_ptr != NULL; field_ptr = field_ptr->next) {
+    for (field_ptr = struct_ptr->fields; field_ptr != NULL; field_ptr = (s_struct_712_field *) ((s_flist_node *) field_ptr)->next) {
         // comma separating struct fields
         if (field_ptr != struct_ptr->fields) {
             hash_byte(',', (cx_hash_t *) &global_sha3);
@@ -115,7 +115,7 @@ static bool get_struct_dependencies(s_struct_dep **first_dep,
     s_struct_dep *tmp;
     s_struct_dep *new_dep;
 
-    for (field_ptr = struct_ptr->fields; field_ptr != NULL; field_ptr = field_ptr->next) {
+    for (field_ptr = struct_ptr->fields; field_ptr != NULL; field_ptr = (s_struct_712_field *) ((s_flist_node *) field_ptr)->next) {
         if (field_ptr->type == TYPE_CUSTOM) {
             // get struct name
             arg_structname = get_struct_field_typename(field_ptr);
