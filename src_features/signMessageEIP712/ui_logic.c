@@ -47,8 +47,8 @@ typedef struct {
 } s_amount_context;
 
 typedef struct filter_crc {
+    s_flist_node _list;
     uint32_t value;
-    struct filter_crc *next;
 } s_filter_crc;
 
 typedef struct {
@@ -818,7 +818,7 @@ void ui_712_set_filters_count(uint8_t count) {
 uint8_t ui_712_remaining_filters(void) {
     uint8_t filter_count = 0;
 
-    for (const s_filter_crc *tmp = ui_ctx->filters_crc; tmp != NULL; tmp = tmp->next) filter_count += 1;
+    for (const s_filter_crc *tmp = ui_ctx->filters_crc; tmp != NULL; tmp = (s_filter_crc *)((s_flist_node *)tmp)->next) filter_count += 1;
     return ui_ctx->filters_to_process - filter_count;
 }
 
@@ -895,7 +895,7 @@ bool ui_712_push_new_filter_path(uint32_t path_crc) {
     uint8_t filter_count = 0;
 
     // check if already present
-    for (tmp = ui_ctx->filters_crc; tmp != NULL; tmp = tmp->next) {
+    for (tmp = ui_ctx->filters_crc; tmp != NULL; tmp = (s_filter_crc *)((s_flist_node *)tmp)->next) {
         if (tmp->value == path_crc) {
             PRINTF("EIP-712 path CRC (%x) already found!\n", path_crc);
             return true;
@@ -916,13 +916,7 @@ bool ui_712_push_new_filter_path(uint32_t path_crc) {
     new_crc->value = path_crc;
 
     PRINTF("Pushing new EIP-712 path CRC (%x)\n", path_crc);
-    // add to list
-    if (ui_ctx->filters_crc == NULL) {
-        ui_ctx->filters_crc = new_crc;
-    } else {
-        for (tmp = ui_ctx->filters_crc; tmp->next != NULL; tmp = tmp->next);
-        tmp->next = new_crc;
-    }
+    flist_push_back((s_flist_node **) &ui_ctx->filters_crc, (s_flist_node *) new_crc);
     return true;
 }
 
