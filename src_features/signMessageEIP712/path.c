@@ -783,5 +783,12 @@ bool path_init(void) {
  * De-initialize the path context
  */
 void path_deinit(void) {
-    path_struct = NULL;
+    if (path_struct != NULL) {
+        app_mem_free(path_struct);
+        path_struct = NULL;
+    }
+    if (path_backup != NULL) {
+        app_mem_free(path_backup);
+        path_backup = NULL;
+    }
 }

@@ -720,11 +720,26 @@ bool ui_712_init(void) {
     return ui_ctx != NULL;
 }
 
+static void delete_filter_crc(s_filter_crc *fcrc) {
+    app_mem_free(fcrc);
+}
+
+static void delete_ui_pair(s_ui_712_pair *pair) {
+    if (pair->key != NULL) app_mem_free(pair->key);
+    if (pair->value != NULL) app_mem_free(pair->value);
+    app_mem_free(pair);
+}
+
 /**
  * Deinit function that simply unsets the struct pointer to NULL
  */
 void ui_712_deinit(void) {
-    ui_ctx = NULL;
+    if (ui_ctx != NULL) {
+        app_mem_free(ui_ctx);
+        if (ui_ctx->filters_crc != NULL) flist_clear((s_flist_node **) &ui_ctx->filters_crc, (f_list_node_del) &delete_filter_crc);
+        if (ui_ctx->ui_pairs != NULL) flist_clear((s_flist_node **)&ui_ctx->ui_pairs, (f_list_node_del) &delete_ui_pair);
+        ui_ctx = NULL;
+    }
 }
 
 /**
