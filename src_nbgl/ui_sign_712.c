@@ -97,7 +97,7 @@ static void ui_712_start_common(void) {
     }
     appState = APP_STATE_SIGNING_EIP712;
     explicit_bzero(&warning, sizeof(nbgl_warning_t));
-#ifdef HAVE_WEB3_CHECKS
+#ifdef HAVE_TRANSACTION_CHECKS
     set_tx_simulation_warning(&warning, false, false);
 #endif
 }
@@ -135,8 +135,8 @@ void ui_712_switch_to_message(void) {
     message_update(true);
 }
 
-#ifdef HAVE_WEB3_CHECKS
-static void ui_712_w3c_cb(bool confirm) {
+#ifdef HAVE_TRANSACTION_CHECKS
+static void ui_712_tx_check_cb(bool confirm) {
     if (confirm) {
         // User has clicked on "Reject transaction"
         ui_typed_message_review_choice(false);
@@ -172,10 +172,10 @@ void ui_712_switch_to_sign(void) {
             nbgl_useCaseReviewStreamingContinue(&pairs_list, message_progress);
             return;
         }
-#ifdef HAVE_WEB3_CHECKS
+#ifdef HAVE_TRANSACTION_CHECKS
         if ((TX_SIMULATION.risk != RISK_UNKNOWN) && ((check_tx_simulation_hash() == false) ||
                                                      check_tx_simulation_from_address() == false)) {
-            ui_tx_simulation_error(ui_712_w3c_cb);
+            ui_tx_simulation_error(ui_712_tx_check_cb);
             return;
         }
 #endif

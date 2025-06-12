@@ -3,7 +3,7 @@
 #include "cmd_get_tx_simulation.h"
 
 // TODO Re-activate when partners are ready for eip191
-#undef HAVE_WEB3_CHECKS
+#undef HAVE_TRANSACTION_CHECKS
 
 static nbgl_contentTagValue_t pair;
 static nbgl_contentTagValueList_t pairs_list;
@@ -20,7 +20,7 @@ static void ui_191_finish_cb(bool confirm) {
 
 void ui_191_start(const char *message) {
     explicit_bzero(&warning, sizeof(nbgl_warning_t));
-#ifdef HAVE_WEB3_CHECKS
+#ifdef HAVE_TRANSACTION_CHECKS
     set_tx_simulation_warning(&warning, false, true);
 #endif
 #ifdef SCREEN_SIZE_WALLET

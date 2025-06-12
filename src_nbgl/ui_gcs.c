@@ -267,7 +267,7 @@ bool ui_gcs(void) {
     nbgl_contentInfoList_t *infolist = NULL;
 
     explicit_bzero(&warning, sizeof(nbgl_warning_t));
-#ifdef HAVE_WEB3_CHECKS
+#ifdef HAVE_TRANSACTION_CHECKS
     set_tx_simulation_warning(&warning, true, true);
 #endif
 
