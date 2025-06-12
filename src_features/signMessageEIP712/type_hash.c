@@ -5,6 +5,7 @@
 #include "hash_bytes.h"
 #include "apdu_constants.h"  // APDU response codes
 #include "typed_data.h"
+#include "list.h"
 
 /**
  * Encode & hash the given structure field
@@ -62,42 +63,9 @@ static bool encode_and_hash_type(const s_struct_712 *struct_ptr) {
 }
 
 typedef struct struct_dep {
+    s_flist_node _list;
     const s_struct_712 *s;
-    struct struct_dep *next;
 } s_struct_dep;
-
-/**
- * Sort the given structs based by alphabetical order
- *
- * @param[in,out] deps pointer to the first dependency pointer
- */
-static void sort_dependencies(s_struct_dep **deps) {
-    bool changed;
-    s_struct_dep *a, *b;
-    const char *name1, *name2;
-    uint8_t namelen1, namelen2;
-    int str_cmp_result;
-
-    do {
-        changed = false;
-        for (s_struct_dep **tmp = deps; (*tmp != NULL) && ((*tmp)->next != NULL); tmp = &(*tmp)->next) {
-            name1 = (*tmp)->s->name;
-            namelen1 = strlen(name1);
-            name2 = (*tmp)->next->s->name;
-            namelen2 = strlen(name2);
-
-            str_cmp_result = strncmp(name1, name2, MIN(namelen1, namelen2));
-            if ((str_cmp_result > 0) || ((str_cmp_result == 0) && (namelen1 > namelen2))) {
-                a = *tmp;
-                b = a->next;
-                *tmp = b;
-                a->next = b->next;
-                b->next = a;
-                changed = true;
-            }
-        }
-    } while (changed);
-}
 
 /**
  * Find all the dependencies from a given structure
@@ -128,7 +96,7 @@ static bool get_struct_dependencies(s_struct_dep **first_dep,
             }
 
             // check if it is not already present in the dependencies array
-            for (tmp = *first_dep; tmp != NULL; tmp = tmp->next) {
+            for (tmp = *first_dep; tmp != NULL; tmp = (s_struct_dep *) ((s_flist_node *) tmp)->next) {
                 // it's a match!
                 if (tmp->s == arg_struct_ptr) {
                     break;
@@ -142,19 +110,34 @@ static bool get_struct_dependencies(s_struct_dep **first_dep,
                 }
                 explicit_bzero(new_dep, sizeof(*new_dep));
                 new_dep->s = arg_struct_ptr;
-                if (*first_dep == NULL) {
-                    *first_dep = new_dep;
-                } else {
-                    // add to list
-                    for (tmp = *first_dep; (tmp != NULL) && (tmp->next != NULL); tmp = tmp->next);
-                    tmp->next = new_dep;
-                }
+                flist_push_back((s_flist_node **) first_dep, (s_flist_node *) new_dep);
                 // TODO: Move away from recursive calls
                 get_struct_dependencies(first_dep, arg_struct_ptr);
             }
         }
     }
     return true;
+}
+
+static bool compare_struct_deps(const s_struct_dep *a, const s_struct_dep *b) {
+    const char *name1, *name2;
+    size_t namelen1, namelen2;
+    int str_cmp_result;
+
+    name1 = a->s->name;
+    namelen1 = strlen(name1);
+    name2 = b->s->name;
+    namelen2 = strlen(name2);
+
+    str_cmp_result = strncmp(name1, name2, MIN(namelen1, namelen2));
+    if ((str_cmp_result > 0) || ((str_cmp_result == 0) && (namelen1 > namelen2))) {
+        return false;
+    }
+    return true;
+}
+
+static void delete_struct_dep(s_struct_dep *sdep) {
+    app_mem_free(sdep);
 }
 
 /**
@@ -181,12 +164,12 @@ bool type_hash(const char *struct_name, const uint8_t struct_name_length, uint8_
     if (!get_struct_dependencies(&deps, struct_ptr)) {
         return false;
     }
-    sort_dependencies(&deps);
+    flist_sort((s_flist_node **) &deps, (f_list_node_cmp) &compare_struct_deps);
     if (encode_and_hash_type(struct_ptr) == false) {
         return false;
     }
     // loop over each struct and generate string
-    for (const s_struct_dep *tmp = deps; tmp != NULL; tmp = tmp->next) {
+    for (const s_struct_dep *tmp = deps; tmp != NULL; tmp = (s_struct_dep *) ((s_flist_node *) tmp)->next) {
         if (encode_and_hash_type(tmp->s) == false) {
             return false;
         }
