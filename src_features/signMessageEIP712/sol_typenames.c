@@ -59,6 +59,16 @@ bool sol_typenames_init(void) {
     return true;
 }
 
+void sol_typenames_deinit(void) {
+    if (g_sol_types != NULL) {
+        for (int i = 0; i < (TYPES_COUNT - 1);  ++i) {
+            app_mem_free(g_sol_types[i].name);
+        }
+        app_mem_free(g_sol_types);
+        g_sol_types = NULL;
+    }
+}
+
 /**
  * Get typename from a given field
  *
