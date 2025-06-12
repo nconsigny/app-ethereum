@@ -13,11 +13,13 @@
 #include "filtering.h"
 #include "network.h"
 #include "time_format.h"
+#include "list.h"
 
 #define AMOUNT_JOIN_FLAG_TOKEN (1 << 0)
 #define AMOUNT_JOIN_FLAG_VALUE (1 << 1)
 
 typedef struct amount_join {
+    s_flist_node _list;
     // display name, NULL-terminated
     char name[25 + 1];
     // indicates the steps the token join has gone through
@@ -25,7 +27,6 @@ typedef struct amount_join {
     uint8_t token_idx;
     uint8_t value_length;
     uint8_t value[INT256_LENGTH];
-    struct amount_join *next;
 } s_amount_join;
 
 typedef enum {
@@ -433,7 +434,7 @@ static s_amount_join *get_amount_join(uint8_t token_idx) {
     s_amount_join *tmp;
     s_amount_join *new;
 
-    for (tmp = ui_ctx->amount.joins; tmp != NULL; tmp = tmp->next) {
+    for (tmp = ui_ctx->amount.joins; tmp != NULL; tmp = (s_amount_join *)((s_flist_node *)tmp)->next) {
         if (tmp->token_idx == token_idx) break;
     }
     if (tmp != NULL) return tmp;
@@ -445,14 +446,7 @@ static s_amount_join *get_amount_join(uint8_t token_idx) {
     explicit_bzero(new, sizeof(*new));
     new->token_idx = token_idx;
 
-    // add to list
-    if (ui_ctx->amount.joins == NULL) {
-        ui_ctx->amount.joins = new;
-    } else {
-        for (tmp = ui_ctx->amount.joins; tmp->next != NULL; tmp = tmp->next);
-        tmp->next = new;
-    }
-
+    flist_push_back((s_flist_node **)&ui_ctx->amount.joins, (s_flist_node *)new);
     return new;
 }
 
