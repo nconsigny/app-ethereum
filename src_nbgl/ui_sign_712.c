@@ -61,7 +61,9 @@ static void message_update(bool confirm) {
         if (!review_skipped) {
             LEDGER_ASSERT(ui_712_push_new_pair(strings.tmp.tmp2, strings.tmp.tmp), "Out of memory");
             const s_ui_712_pair *tmp;
-            for (tmp = ui_712_get_pairs(); tmp->next != NULL; tmp = tmp->next);
+            for (tmp = ui_712_get_pairs();
+                 (s_ui_712_pair *) ((s_flist_node *) tmp)->next != NULL;
+                 tmp = (s_ui_712_pair *) ((s_flist_node *) tmp)->next);
             if (tmp != NULL) {
                 pairs[pair_idx].item = tmp->key;
                 pairs[pair_idx].value = tmp->value;

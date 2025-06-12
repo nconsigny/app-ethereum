@@ -971,7 +971,6 @@ const s_ui_712_pair *ui_712_get_pairs(void) {
 
 bool ui_712_push_new_pair(const char *key, const char *value) {
     s_ui_712_pair *new_pair;
-    s_ui_712_pair *tmp;
 
     // allocate pair
     if ((new_pair = app_mem_alloc(sizeof(*new_pair))) == NULL) {
@@ -979,13 +978,7 @@ bool ui_712_push_new_pair(const char *key, const char *value) {
     }
     explicit_bzero(new_pair, sizeof(*new_pair));
 
-    // insert
-    if (ui_ctx->ui_pairs == NULL) {
-        ui_ctx->ui_pairs = new_pair;
-    } else {
-        for (tmp = ui_ctx->ui_pairs; tmp->next != NULL; tmp = tmp->next);
-        tmp->next = new_pair;
-    }
+    flist_push_back((s_flist_node **) &ui_ctx->ui_pairs, (s_flist_node *) new_pair);
 
     if ((new_pair->key = app_mem_strdup(key)) == NULL) {
         return false;
@@ -998,20 +991,13 @@ bool ui_712_push_new_pair(const char *key, const char *value) {
 }
 
 void ui_712_delete_pairs(size_t keep) {
-    s_ui_712_pair *node;
-    s_ui_712_pair *next;
-    size_t size = 0;
+    size_t size;
 
-    for (const s_ui_712_pair *tmp = ui_ctx->ui_pairs; tmp != NULL; tmp = tmp->next) size += 1;
+    size = flist_size((s_flist_node **) &ui_ctx->ui_pairs);
     if (size > 0) {
-        for (node = ui_ctx->ui_pairs; node != NULL; node = next) {
-            if (size == keep) break;
-            next = node->next;
-            if (node->key != NULL) app_mem_free(node->key);
-            if (node->value != NULL) app_mem_free(node->value);
-            app_mem_free(node);
+        while (size > keep) {
+            flist_pop_front((s_flist_node **) &ui_ctx->ui_pairs, (f_list_node_del) &delete_ui_pair);
             size -= 1;
         }
-        ui_ctx->ui_pairs = node;
     }
 }

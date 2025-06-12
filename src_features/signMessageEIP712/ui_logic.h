@@ -6,6 +6,7 @@
 #include "uint256.h"
 #include "typed_data.h"
 #include "trusted_name.h"
+#include "list.h"
 
 typedef enum { EIP712_FILTERING_BASIC, EIP712_FILTERING_FULL } e_eip712_filtering_mode;
 typedef enum {
@@ -15,9 +16,9 @@ typedef enum {
 } e_eip712_nfs;  // next field state
 
 typedef struct ui_712_pair {
+    s_flist_node _list;
     char *key;
     char *value;
-    struct ui_712_pair *next;
 } s_ui_712_pair;
 
 bool ui_712_init(void);
