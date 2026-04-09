@@ -617,7 +617,7 @@ void sphincs_keygen_init(const uint8_t master_secret[32],
     state->done = 0;
 }
 
-#define KEYGEN_BATCH_SIZE 4  /* leaves per APDU step */
+#define KEYGEN_BATCH_SIZE 8  /* leaves per APDU step (~4s per step on Nano S+) */
 
 uint32_t sphincs_keygen_step(sphincs_keygen_state_t *state) {
     if (state->done) return 256;
