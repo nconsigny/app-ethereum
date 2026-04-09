@@ -10,14 +10,18 @@
 
 #include "cx.h"
 
+/* Static keccak context — saves ~450 bytes of stack per hash call.
+ * Nano S+ has only ~1.5-2KB app stack; this prevents stack overflow
+ * in deep call chains (sign_step → build_fors_tree → th → keccak). */
+static cx_sha3_t g_sha3;
+
 /* ================================================================
  * keccak256 wrapper
  * ================================================================ */
 
 void sphincs_keccak256(const uint8_t *data, size_t len, uint8_t out[32]) {
-    cx_sha3_t sha3;
-    cx_keccak_init_no_throw(&sha3, 256);
-    cx_hash_no_throw((cx_hash_t *)&sha3, CX_LAST, data, len, out, 32);
+    cx_keccak_init_no_throw(&g_sha3, 256);
+    cx_hash_no_throw((cx_hash_t *)&g_sha3, CX_LAST, data, len, out, 32);
 }
 
 /* ================================================================
@@ -124,19 +128,18 @@ void sphincs_th_multi(const uint8_t seed[SPHINCS_N],
     uint8_t hash[32];
     uint8_t word[32];
 
-    cx_sha3_t sha3;
-    cx_keccak_init_no_throw(&sha3, 256);
+    cx_keccak_init_no_throw(&g_sha3, 256);
 
     pad_n_to_32(word, seed);
-    cx_hash_no_throw((cx_hash_t *)&sha3, 0, word, 32, NULL, 0);
-    cx_hash_no_throw((cx_hash_t *)&sha3, 0, adrs, 32, NULL, 0);
+    cx_hash_no_throw((cx_hash_t *)&g_sha3, 0, word, 32, NULL, 0);
+    cx_hash_no_throw((cx_hash_t *)&g_sha3, 0, adrs, 32, NULL, 0);
 
     for (size_t i = 0; i < count; i++) {
         pad_n_to_32(word, vals[i]);
-        cx_hash_no_throw((cx_hash_t *)&sha3, 0, word, 32, NULL, 0);
+        cx_hash_no_throw((cx_hash_t *)&g_sha3, 0, word, 32, NULL, 0);
     }
 
-    cx_hash_no_throw((cx_hash_t *)&sha3, CX_LAST, NULL, 0, hash, 32);
+    cx_hash_no_throw((cx_hash_t *)&g_sha3, CX_LAST, NULL, 0, hash, 32);
 
     memcpy(out, hash, SPHINCS_N);
 }

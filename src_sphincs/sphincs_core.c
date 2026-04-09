@@ -283,8 +283,9 @@ static void build_fors_tree_auth(const uint8_t seed[SPHINCS_N],
             }
 
             /* Process remaining leaves, merging pairs bottom-up */
-            /* Use a simple stack-based approach with bounded depth */
-            uint8_t stack[SPHINCS_A][SPHINCS_N];
+            /* Static to save 176 bytes of call stack (Nano S+ ~1.5KB stack) */
+            static uint8_t fors_th_stack[SPHINCS_A][SPHINCS_N];
+            uint8_t (*stack)[SPHINCS_N] = fors_th_stack;
             uint32_t stack_top = 0;
             /* Push first leaf */
             memcpy(stack[0], node, SPHINCS_N);
