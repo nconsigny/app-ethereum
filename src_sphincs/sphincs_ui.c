@@ -1,5 +1,5 @@
 /**
- * SPHINCS+ C11 UI — NBGL confirmation screens
+ * SPHINCS+ C11 UI — NBGL confirmation screens with progress spinner
  */
 
 #include "sphincs_ui.h"
@@ -12,10 +12,13 @@
 #include "common_ui.h"
 #include "nbgl_use_case.h"
 #include "ui_nbgl.h"
+#include "os_io_seproxyhal.h"
 
 #include <string.h>
+#include <stdio.h>
 
 extern uint8_t G_io_apdu_buffer[];
+extern void io_seproxyhal_io_heartbeat(void);
 
 /* State from sphincs_apdu.c */
 extern sphincs_public_key_t sphincs_pk;
@@ -25,10 +28,13 @@ extern uint16_t sphincs_sig_offset;
 extern bool sphincs_sig_pending;
 
 /* Display buffers */
-static char pk_seed_hex[35];    /* "0x" + 32 hex + null */
+static char pk_seed_hex[35];
 static char pk_root_hex[35];
-static char msg_hash_hex[67];   /* "0x" + 64 hex + null */
+static char msg_hash_hex[67];
 static uint8_t pending_msg_hash[32];
+
+/* Progress spinner text buffer */
+static char progress_text[64];
 
 /* Hex conversion */
 static void sphincs_to_hex(const uint8_t *bytes, size_t len, char *out) {
@@ -39,6 +45,87 @@ static void sphincs_to_hex(const uint8_t *bytes, size_t len, char *out) {
         out[2 + i*2 + 1] = hx[bytes[i] & 0x0F];
     }
     out[2 + len*2] = '\0';
+}
+
+/* Simple integer-to-string (no sprintf on all targets) */
+static void uint_to_str(uint32_t val, char *out) {
+    char tmp[12];
+    int i = 0;
+    if (val == 0) { out[0] = '0'; out[1] = '\0'; return; }
+    while (val > 0) {
+        tmp[i++] = '0' + (val % 10);
+        val /= 10;
+    }
+    for (int j = 0; j < i; j++) {
+        out[j] = tmp[i - 1 - j];
+    }
+    out[i] = '\0';
+}
+
+/* ================================================================
+ * Progress callback — updates spinner screen + keeps USB alive
+ * ================================================================ */
+
+static void signing_progress_cb(sphincs_phase_t phase, uint32_t step, uint32_t total) {
+    char step_str[12], total_str[12];
+
+    switch (phase) {
+        case SPHINCS_PHASE_KEYGEN_WOTS:
+            uint_to_str(step, step_str);
+            uint_to_str(total, total_str);
+            /* "Keygen: leaf 32/256" */
+            strcpy(progress_text, "Keygen: leaf ");
+            strcat(progress_text, step_str);
+            strcat(progress_text, "/");
+            strcat(progress_text, total_str);
+            break;
+
+        case SPHINCS_PHASE_R_GRINDING:
+            strcpy(progress_text, "Grinding R nonce...");
+            break;
+
+        case SPHINCS_PHASE_FORS_TREE:
+            uint_to_str(step + 1, step_str);
+            uint_to_str(total, total_str);
+            /* "FORS tree 3/13" */
+            strcpy(progress_text, "FORS tree ");
+            strcat(progress_text, step_str);
+            strcat(progress_text, "/");
+            strcat(progress_text, total_str);
+            break;
+
+        case SPHINCS_PHASE_HT_LAYER_SIGN:
+            uint_to_str(step + 1, step_str);
+            uint_to_str(total, total_str);
+            strcpy(progress_text, "WOTS sign layer ");
+            strcat(progress_text, step_str);
+            strcat(progress_text, "/");
+            strcat(progress_text, total_str);
+            break;
+
+        case SPHINCS_PHASE_HT_LAYER_BUILD:
+            uint_to_str(step + 1, step_str);
+            uint_to_str(total, total_str);
+            strcpy(progress_text, "Merkle tree ");
+            strcat(progress_text, step_str);
+            strcat(progress_text, "/");
+            strcat(progress_text, total_str);
+            break;
+
+        case SPHINCS_PHASE_DONE:
+            strcpy(progress_text, "Signing complete!");
+            break;
+
+        default:
+            strcpy(progress_text, "Processing...");
+            break;
+    }
+
+    /* Update the spinner screen text */
+    nbgl_useCaseSpinner(progress_text);
+
+    /* Keep USB communication alive — prevents timeout during long operations */
+    io_seproxyhal_io_heartbeat();
 }
 
 /* ================================================================
@@ -85,13 +172,22 @@ void ui_sphincs_confirm_pubkey(void) {
 }
 
 /* ================================================================
- * Signing Confirmation
+ * Signing Confirmation + Progress
  * ================================================================ */
 
 static void sign_review_cb(bool confirm) {
     if (confirm) {
-        /* Sign (slow: ~20-30s on device) */
-        if (!sphincs_sign(&sphincs_sk, pending_msg_hash, sphincs_sig_buf)) {
+        /* Show spinner and register progress callback */
+        nbgl_useCaseSpinner("Preparing SPHINCS+ signature...");
+        sphincs_set_progress_callback(signing_progress_cb);
+
+        /* Sign (slow: ~20-30s on device, spinner updates during) */
+        bool ok = sphincs_sign(&sphincs_sk, pending_msg_hash, sphincs_sig_buf);
+
+        /* Unregister callback */
+        sphincs_set_progress_callback(NULL);
+
+        if (!ok) {
             io_seproxyhal_send_status(APDU_RESPONSE_INTERNAL_ERROR, 0, true, false);
             nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_REJECTED, ui_idle);
             return;

@@ -26,6 +26,36 @@ typedef struct {
 } sphincs_secret_key_t;
 
 /* ================================================================
+ * Progress callback
+ *
+ * Called during long operations (keygen, signing) to update the UI
+ * and keep USB alive via io_seproxyhal_io_heartbeat().
+ * ================================================================ */
+
+typedef enum {
+    SPHINCS_PHASE_KEYGEN_WOTS,      /* "Keygen: WOTS key %d/256" */
+    SPHINCS_PHASE_R_GRINDING,       /* "Grinding R nonce..." */
+    SPHINCS_PHASE_FORS_TREE,        /* "FORS tree %d/13" */
+    SPHINCS_PHASE_HT_LAYER_BUILD,   /* "HT layer %d: building tree" */
+    SPHINCS_PHASE_HT_LAYER_SIGN,    /* "HT layer %d: WOTS signing" */
+    SPHINCS_PHASE_DONE,             /* "Signing complete" */
+} sphincs_phase_t;
+
+/**
+ * Progress callback type.
+ * @param phase  Current operation phase
+ * @param step   Current step within phase (e.g., tree index)
+ * @param total  Total steps in phase
+ */
+typedef void (*sphincs_progress_cb_t)(sphincs_phase_t phase, uint32_t step, uint32_t total);
+
+/**
+ * Set the progress callback. Set to NULL to disable.
+ * The callback is invoked between major phases to allow UI updates.
+ */
+void sphincs_set_progress_callback(sphincs_progress_cb_t cb);
+
+/* ================================================================
  * Key generation
  * ================================================================ */
 

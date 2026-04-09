@@ -15,6 +15,22 @@
 #define ZEROIZE(ptr, len) explicit_bzero((ptr), (len))
 
 /* ================================================================
+ * Progress callback
+ * ================================================================ */
+
+static sphincs_progress_cb_t g_progress_cb = NULL;
+
+void sphincs_set_progress_callback(sphincs_progress_cb_t cb) {
+    g_progress_cb = cb;
+}
+
+static void report_progress(sphincs_phase_t phase, uint32_t step, uint32_t total) {
+    if (g_progress_cb) {
+        g_progress_cb(phase, step, total);
+    }
+}
+
+/* ================================================================
  * Secret derivation helpers (match signer.py exactly)
  * ================================================================ */
 
@@ -347,6 +363,9 @@ static void build_subtree_root(const uint8_t seed[SPHINCS_N],
     uint32_t stack_top = 0;
 
     for (uint32_t i = 0; i < n_leaves; i++) {
+        if ((i & 0x1F) == 0) { /* every 32 leaves */
+            report_progress(SPHINCS_PHASE_KEYGEN_WOTS, i, n_leaves);
+        }
         uint8_t leaf[SPHINCS_N];
         wots_keygen_pk(seed, sk_seed, layer, tree, i, leaf);
 
@@ -563,6 +582,7 @@ bool sphincs_sign(const sphincs_secret_key_t *sk,
     size_t sig_off = 0;
 
     /* Step 1: Grind R */
+    report_progress(SPHINCS_PHASE_R_GRINDING, 0, 1);
     uint8_t R[SPHINCS_N];
     uint8_t digest[32];
     if (!grind_R(sk->pk_seed, sk->pk_root, msg_hash, R, digest)) {
@@ -576,11 +596,9 @@ bool sphincs_sign(const sphincs_secret_key_t *sk,
     /* Step 2: FORS+C */
     uint8_t fors_roots[SPHINCS_K][SPHINCS_N];
 
-    /* K-1 normal trees */
+    /* K-1 normal trees: write secrets */
     for (uint32_t t = 0; t < SPHINCS_K - 1; t++) {
         uint32_t idx = extract_fors_index(digest, t);
-
-        /* Write secret */
         uint8_t secret[SPHINCS_N];
         fors_secret(sk->sk_seed, t, idx, secret);
         memcpy(sig + sig_off, secret, SPHINCS_N);
@@ -601,6 +619,7 @@ bool sphincs_sign(const sphincs_secret_key_t *sk,
 
     /* Auth paths for K-1 normal trees */
     for (uint32_t t = 0; t < SPHINCS_K - 1; t++) {
+        report_progress(SPHINCS_PHASE_FORS_TREE, t, SPHINCS_K);
         uint32_t idx = extract_fors_index(digest, t);
         uint8_t root[SPHINCS_N];
         uint8_t auth[SPHINCS_A][SPHINCS_N];
@@ -612,6 +631,7 @@ bool sphincs_sign(const sphincs_secret_key_t *sk,
             sig_off += SPHINCS_N;
         }
     }
+    report_progress(SPHINCS_PHASE_FORS_TREE, SPHINCS_K, SPHINCS_K);
 
     /* Compute forced-zero tree's contribution to FORS roots */
     {
@@ -642,6 +662,7 @@ bool sphincs_sign(const sphincs_secret_key_t *sk,
         idx_tree >>= SPHINCS_SUBTREE_H;
 
         /* WOTS+C signing */
+        report_progress(SPHINCS_PHASE_HT_LAYER_SIGN, layer, SPHINCS_D);
         uint32_t count;
         uint8_t wots_digest_val[32];
         uint8_t digits[SPHINCS_L];
@@ -669,7 +690,8 @@ bool sphincs_sign(const sphincs_secret_key_t *sk,
         sig[sig_off++] = (uint8_t)(count >> 8);
         sig[sig_off++] = (uint8_t)(count);
 
-        /* Merkle auth path */
+        /* Merkle auth path (builds full subtree — most expensive per layer) */
+        report_progress(SPHINCS_PHASE_HT_LAYER_BUILD, layer, SPHINCS_D);
         uint8_t auth_path[SPHINCS_SUBTREE_H][SPHINCS_N];
         build_subtree_sign(sk->pk_seed, sk->sk_seed, layer, idx_tree, idx_leaf, auth_path);
 
@@ -710,6 +732,7 @@ bool sphincs_sign(const sphincs_secret_key_t *sk,
         }
     }
 
+    report_progress(SPHINCS_PHASE_DONE, 0, 0);
     return true;
 }
 
