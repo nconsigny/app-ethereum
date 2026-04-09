@@ -35,6 +35,10 @@ bool sphincs_sig_pending = false;
 static sphincs_keygen_state_t keygen_state;
 static bool keygen_in_progress = false;
 
+/* Chunked signing state */
+static sphincs_sign_state_t sign_state;
+bool sign_approved = false;  /* extern'd by sphincs_ui.c */
+
 #define SPHINCS_CHUNK_SIZE 250
 
 /* ================================================================
@@ -170,7 +174,8 @@ uint16_t handleSphincsSign(uint8_t p1, uint8_t p2,
                             unsigned int *flags) {
     (void)p2;
 
-    if (p1 == P1_MORE) {
+    if (p1 == P1_SPHINCS_SIGN_CHUNK) {
+        /* Return next 250-byte signature chunk */
         if (!sphincs_sig_pending) return APDU_RESPONSE_CONDITION_NOT_SATISFIED;
 
         uint16_t remaining = SPHINCS_SIG_SIZE - sphincs_sig_offset;
@@ -190,7 +195,37 @@ uint16_t handleSphincsSign(uint8_t p1, uint8_t p2,
         return APDU_NO_RESPONSE;
     }
 
-    /* First APDU: parse path + msg_hash */
+    if (p1 == P1_SPHINCS_SIGN_STEP) {
+        /* Execute one signing step */
+        if (!sign_approved) return APDU_RESPONSE_CONDITION_NOT_SATISFIED;
+
+        sphincs_sig_buf = mem_buffer;
+        sphincs_sign_phase_t phase = sphincs_sign_step(&sign_state, &sphincs_sk, sphincs_sig_buf);
+
+        if (phase == SIGN_PHASE_IDLE) {
+            sign_approved = false;
+            return APDU_RESPONSE_INTERNAL_ERROR;
+        }
+
+        if (phase == SIGN_PHASE_DONE) {
+            /* Signature complete — ready for chunk retrieval */
+            sphincs_sig_pending = true;
+            sphincs_sig_offset = 0;
+            sign_approved = false;
+        }
+
+        /* Return: [phase(1), step(1), layer(1), done(1)] */
+        G_io_apdu_buffer[0] = (uint8_t)phase;
+        G_io_apdu_buffer[1] = (uint8_t)(sign_state.step & 0xFF);
+        G_io_apdu_buffer[2] = (uint8_t)sign_state.ht_layer;
+        G_io_apdu_buffer[3] = (phase == SIGN_PHASE_DONE) ? 1 : 0;
+        U2BE_ENCODE(G_io_apdu_buffer, 4, APDU_RESPONSE_OK);
+        io_exchange(CHANNEL_APDU | IO_RETURN_AFTER_TX, 6);
+        *flags |= IO_ASYNCH_REPLY;
+        return APDU_NO_RESPONSE;
+    }
+
+    /* P1=0x00: parse path + msg_hash, show confirmation */
     uint32_t path[10];
     uint8_t path_len;
     uint16_t err = parse_path(data, length, path, &path_len);
@@ -200,12 +235,14 @@ uint16_t handleSphincsSign(uint8_t p1, uint8_t p2,
     if (length < header_len + 32) return APDU_RESPONSE_WRONG_DATA_LENGTH;
     const uint8_t *msg_hash = data + header_len;
 
-    /* Key must be derived already via GET_PUBLIC_KEY */
     if (sphincs_pk.pk_seed[0] == 0 && sphincs_pk.pk_root[0] == 0) {
         return APDU_RESPONSE_CONDITION_NOT_SATISFIED;
     }
 
-    /* Show confirmation screen — signing happens in the callback */
+    /* Init signing state */
+    sphincs_sign_init(&sign_state, &sphincs_sk, msg_hash);
+
+    /* Show confirmation screen */
     ui_sphincs_confirm_sign(msg_hash);
     *flags |= IO_ASYNCH_REPLY;
     return APDU_NO_RESPONSE;

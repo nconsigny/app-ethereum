@@ -77,32 +77,68 @@ def encode_path(path):
         data += struct.pack(">I", p)
     return data
 
+PHASE_NAMES = {
+    1: "R grinding",
+    2: "FORS tree",
+    3: "WOTS grind",
+    4: "Subtree leaf",
+    5: "WOTS verify",
+    6: "DONE",
+}
+
 def ledger_sphincs_sign(dongle, msg_hash):
-    """Sign msg_hash with SPHINCS+ on Ledger. Returns 3976-byte signature."""
+    """Sign msg_hash with SPHINCS+ on Ledger via chunked protocol."""
     path_data = encode_path(BIP32_PATH)
     first_data = path_data + msg_hash
 
     print("  Sending sign request to Ledger...")
     print("  >>> APPROVE ON DEVICE <<<")
 
-    # First APDU: triggers confirmation screen
+    # P1=0x00: init + confirm (async — user must approve on device)
     apdu = bytes([CLA, INS_SPHINCS_SIGN, 0x00, 0x00, len(first_data)]) + first_data
-    resp = dongle.exchange(apdu, timeout=300000)  # 5 min timeout for signing
+    resp = dongle.exchange(apdu, timeout=60000)
+    print("  User approved. Starting chunked signing...")
 
-    sig = bytes(resp)
-    print(f"  Chunk 1: {len(resp)} bytes")
+    # P1=0x04: step through signing phases
+    t0 = time.time()
+    step_count = 0
+    last_phase = 0
 
-    # Collect remaining chunks
-    chunk_num = 1
+    while True:
+        apdu = bytes([CLA, INS_SPHINCS_SIGN, 0x04, 0x00, 0x00])
+        resp = dongle.exchange(apdu, timeout=10000)
+
+        phase = resp[0]
+        step = resp[1]
+        layer = resp[2]
+        done = resp[3]
+        step_count += 1
+
+        if phase != last_phase:
+            elapsed = time.time() - t0
+            name = PHASE_NAMES.get(phase, f"phase {phase}")
+            print(f"  [{elapsed:.0f}s] {name} (layer={layer}, step={step})")
+            last_phase = phase
+
+        if step_count % 32 == 0:
+            elapsed = time.time() - t0
+            print(f"  [{elapsed:.0f}s] step {step_count}...")
+
+        if done:
+            break
+
+    elapsed = time.time() - t0
+    print(f"  Signing complete in {elapsed:.1f}s ({step_count} steps)")
+
+    # P1=0x80: collect signature chunks
+    print("  Collecting signature chunks...")
+    sig = b""
     while len(sig) < SPHINCS_SIG_SIZE:
         apdu = bytes([CLA, INS_SPHINCS_SIGN, 0x80, 0x00, 0x00])
-        resp = dongle.exchange(apdu, timeout=30000)
+        resp = dongle.exchange(apdu, timeout=10000)
         sig += bytes(resp)
-        chunk_num += 1
-        if chunk_num % 4 == 0:
-            print(f"  Chunk {chunk_num}: total {len(sig)}/{SPHINCS_SIG_SIZE} bytes")
 
-    print(f"  Signature complete: {len(sig)} bytes")
+    print(f"  Signature: {len(sig)} bytes")
     return sig
 
 # ============================================================

@@ -813,6 +813,260 @@ bool sphincs_sign(const sphincs_secret_key_t *sk,
 }
 
 /* ================================================================
+ * CHUNKED SIGNING — one phase per APDU
+ * ================================================================ */
+
+void sphincs_sign_init(sphincs_sign_state_t *st,
+                       const sphincs_secret_key_t *sk,
+                       const uint8_t msg_hash[32]) {
+    memset(st, 0, sizeof(*st));
+    memcpy(st->msg_hash, msg_hash, 32);
+    st->phase = SIGN_PHASE_R_GRIND;
+    st->step = 0;
+    st->sig_off = 0;
+}
+
+sphincs_sign_phase_t sphincs_sign_step(sphincs_sign_state_t *st,
+                                        const sphincs_secret_key_t *sk,
+                                        uint8_t *sig) {
+    switch (st->phase) {
+
+    case SIGN_PHASE_R_GRIND: {
+        /* Grind R (~2048 attempts, ~1s) */
+        if (!grind_R(sk->pk_seed, sk->pk_root, st->msg_hash, st->R, st->digest)) {
+            st->phase = SIGN_PHASE_IDLE;
+            return SIGN_PHASE_IDLE;
+        }
+        /* Write R to sig */
+        memcpy(sig, st->R, SPHINCS_N);
+        st->sig_off = SPHINCS_N;
+
+        /* Write all FORS secrets (cheap) */
+        for (uint32_t t = 0; t < SPHINCS_K - 1; t++) {
+            uint32_t idx = extract_fors_index(st->digest, t);
+            uint8_t secret[SPHINCS_N];
+            fors_secret(sk->sk_seed, t, idx, secret);
+            memcpy(sig + st->sig_off, secret, SPHINCS_N);
+            st->sig_off += SPHINCS_N;
+        }
+        /* Forced-zero tree secret */
+        {
+            uint8_t root_last[SPHINCS_N];
+            uint8_t dummy_auth[SPHINCS_A][SPHINCS_N];
+            build_fors_tree_auth(sk->pk_seed, sk->sk_seed, SPHINCS_K - 1, 0, root_last, dummy_auth);
+            memcpy(sig + st->sig_off, root_last, SPHINCS_N);
+            st->sig_off += SPHINCS_N;
+        }
+
+        st->phase = SIGN_PHASE_FORS;
+        st->step = 0;
+        return SIGN_PHASE_R_GRIND;
+    }
+
+    case SIGN_PHASE_FORS: {
+        /* Build one FORS tree and write auth path (~3s per tree) */
+        uint32_t t = st->step;
+        if (t < SPHINCS_K - 1) {
+            uint32_t idx = extract_fors_index(st->digest, t);
+            uint8_t root[SPHINCS_N];
+            uint8_t auth[SPHINCS_A][SPHINCS_N];
+            build_fors_tree_auth(sk->pk_seed, sk->sk_seed, t, idx, root, auth);
+            memcpy(st->fors_roots[t], root, SPHINCS_N);
+
+            for (uint32_t h = 0; h < SPHINCS_A; h++) {
+                memcpy(sig + st->sig_off, auth[h], SPHINCS_N);
+                st->sig_off += SPHINCS_N;
+            }
+            st->step++;
+            return SIGN_PHASE_FORS;
+        }
+
+        /* All FORS trees done — compute forced-zero root and compress */
+        {
+            uint8_t last_secret[SPHINCS_N];
+            memcpy(last_secret, sig + SPHINCS_N + (SPHINCS_K - 1) * SPHINCS_N, SPHINCS_N);
+            uint8_t adrs[32];
+            sphincs_make_adrs(adrs, 0, 0, ADRS_FORS_TREE, SPHINCS_K - 1, 0, 0, 0);
+            sphincs_th(sk->pk_seed, adrs, last_secret, st->fors_roots[SPHINCS_K - 1]);
+        }
+        {
+            uint8_t fors_adrs[32];
+            sphincs_make_adrs(fors_adrs, 0, 0, ADRS_FORS_ROOTS, 0, 0, 0, 0);
+            sphincs_th_multi(sk->pk_seed, fors_adrs,
+                             (const uint8_t (*)[SPHINCS_N])st->fors_roots, SPHINCS_K,
+                             st->current_node);
+        }
+
+        st->ht_idx = extract_ht_index(st->digest);
+        st->idx_tree = st->ht_idx;
+        st->ht_layer = 0;
+        st->phase = SIGN_PHASE_HT_WOTS_GRIND;
+        return SIGN_PHASE_FORS;
+    }
+
+    case SIGN_PHASE_HT_WOTS_GRIND: {
+        /* Grind WOTS counter for current layer (~9s) */
+        uint32_t layer = st->ht_layer;
+        st->idx_leaf = st->idx_tree & SPHINCS_LEAF_MASK;
+        st->idx_tree >>= SPHINCS_SUBTREE_H;
+
+        if (!wots_find_count(sk->pk_seed, layer, st->idx_tree, st->idx_leaf,
+                             st->current_node,
+                             &st->wots_count, st->wots_digest, st->wots_digits)) {
+            st->phase = SIGN_PHASE_IDLE;
+            return SIGN_PHASE_IDLE;
+        }
+
+        /* Write WOTS signature chains */
+        uint8_t adrs[32];
+        sphincs_make_adrs(adrs, layer, st->idx_tree, ADRS_WOTS, st->idx_leaf, 0, 0, 0);
+        for (uint32_t i = 0; i < SPHINCS_L; i++) {
+            uint8_t sk_i[SPHINCS_N];
+            wots_secret(sk->sk_seed, layer, st->idx_tree, st->idx_leaf, i, sk_i);
+            sphincs_set_chain_index(adrs, i);
+            chain_hash(sk->pk_seed, adrs, sk_i, 0, st->wots_digits[i]);
+            memcpy(sig + st->sig_off, sk_i, SPHINCS_N);
+            st->sig_off += SPHINCS_N;
+        }
+
+        /* Write counter */
+        sig[st->sig_off++] = (uint8_t)(st->wots_count >> 24);
+        sig[st->sig_off++] = (uint8_t)(st->wots_count >> 16);
+        sig[st->sig_off++] = (uint8_t)(st->wots_count >> 8);
+        sig[st->sig_off++] = (uint8_t)(st->wots_count);
+
+        /* Init subtree build for auth path */
+        sphincs_keygen_state_t *sub = &st->subtree_state;
+        memcpy(sub->seed, sk->pk_seed, SPHINCS_N);
+        memcpy(sub->sk_seed, sk->sk_seed, SPHINCS_SK_SEED_SIZE);
+        sub->stack_top = 0;
+        sub->leaf_idx = 0;
+        sub->done = 0;
+
+        st->phase = SIGN_PHASE_HT_SUBTREE;
+        st->step = 0;
+        return SIGN_PHASE_HT_WOTS_GRIND;
+    }
+
+    case SIGN_PHASE_HT_SUBTREE: {
+        /* Build one leaf of the subtree (reuse keygen step pattern) */
+        sphincs_keygen_state_t *sub = &st->subtree_state;
+        uint32_t layer = st->ht_layer;
+
+        if (!sub->done) {
+            uint32_t i = sub->leaf_idx;
+            uint8_t adrs[32];
+            uint8_t leaf[SPHINCS_N];
+
+            /* Compute WOTS PK for this leaf */
+            wots_keygen_pk(sk->pk_seed, sk->sk_seed, layer, st->idx_tree, i, leaf);
+
+            /* Treehash merge */
+            uint32_t idx = i;
+            uint32_t level = 0;
+            uint8_t node[SPHINCS_N];
+            memcpy(node, leaf, SPHINCS_N);
+
+            while (level < sub->stack_top && (idx & 1) == 1) {
+                if (sub->stack_top == 0) break;
+                uint32_t pi = idx >> 1;
+                sphincs_make_adrs(adrs, layer, st->idx_tree, ADRS_TREE, 0, 0, level + 1, pi);
+                sphincs_th_pair(sk->pk_seed, adrs, sub->stack[sub->stack_top - 1], node, node);
+                sub->stack_top--;
+                idx >>= 1;
+                level++;
+            }
+            if (sub->stack_top < SPHINCS_SUBTREE_H + 2) {
+                memcpy(sub->stack[sub->stack_top], node, SPHINCS_N);
+                sub->stack_top++;
+            }
+
+            sub->leaf_idx = i + 1;
+            if (sub->leaf_idx >= (1u << SPHINCS_SUBTREE_H)) {
+                sub->done = 1;
+            }
+
+            return SIGN_PHASE_HT_SUBTREE;
+        }
+
+        /* Subtree done — extract auth path using completed tree */
+        /* We need to rebuild to get auth path. For now, use a simpler approach:
+         * the full tree root is in sub->stack[0]. We need auth path siblings.
+         * Unfortunately the treehash doesn't save intermediate nodes.
+         * We'll rebuild using build_subtree_sign which does save them. */
+        {
+            uint8_t auth_path[SPHINCS_SUBTREE_H][SPHINCS_N];
+            build_subtree_sign(sk->pk_seed, sk->sk_seed, st->ht_layer, st->idx_tree,
+                               st->idx_leaf, auth_path);
+
+            for (uint32_t h = 0; h < SPHINCS_SUBTREE_H; h++) {
+                memcpy(sig + st->sig_off, auth_path[h], SPHINCS_N);
+                st->sig_off += SPHINCS_N;
+            }
+        }
+
+        st->phase = SIGN_PHASE_HT_WOTS_SIGN;
+        return SIGN_PHASE_HT_SUBTREE;
+    }
+
+    case SIGN_PHASE_HT_WOTS_SIGN: {
+        /* Verify + advance: complete WOTS chains, compress PK, walk Merkle */
+        uint32_t layer = st->ht_layer;
+        uint8_t adrs[32];
+
+        /* Complete WOTS chains to get PK elements */
+        uint8_t pk_elements[SPHINCS_L][SPHINCS_N];
+        sphincs_make_adrs(adrs, layer, st->idx_tree, ADRS_WOTS, st->idx_leaf, 0, 0, 0);
+        size_t wots_start = st->sig_off - SPHINCS_HT_AUTH - 4 - SPHINCS_WOTS_SIG;
+        for (uint32_t i = 0; i < SPHINCS_L; i++) {
+            memcpy(pk_elements[i], sig + wots_start + i * SPHINCS_N, SPHINCS_N);
+            sphincs_set_chain_index(adrs, i);
+            chain_hash(sk->pk_seed, adrs, pk_elements[i],
+                       st->wots_digits[i], SPHINCS_W - 1 - st->wots_digits[i]);
+        }
+
+        uint8_t pk_adrs[32];
+        sphincs_make_adrs(pk_adrs, layer, st->idx_tree, ADRS_WOTS_PK, st->idx_leaf, 0, 0, 0);
+        uint8_t wots_pk[SPHINCS_N];
+        sphincs_th_multi(sk->pk_seed, pk_adrs,
+                         (const uint8_t (*)[SPHINCS_N])pk_elements, SPHINCS_L, wots_pk);
+
+        /* Walk Merkle auth path */
+        memcpy(st->current_node, wots_pk, SPHINCS_N);
+        uint32_t m_idx = st->idx_leaf;
+        uint8_t *auth_start = sig + st->sig_off - SPHINCS_HT_AUTH;
+        for (uint32_t h = 0; h < SPHINCS_SUBTREE_H; h++) {
+            uint8_t sib[SPHINCS_N];
+            memcpy(sib, auth_start + h * SPHINCS_N, SPHINCS_N);
+            uint32_t pi = m_idx >> 1;
+            uint8_t tree_adrs[32];
+            sphincs_make_adrs(tree_adrs, layer, st->idx_tree, ADRS_TREE, 0, 0, h + 1, pi);
+            if (m_idx & 1) {
+                sphincs_th_pair(sk->pk_seed, tree_adrs, sib, st->current_node, st->current_node);
+            } else {
+                sphincs_th_pair(sk->pk_seed, tree_adrs, st->current_node, sib, st->current_node);
+            }
+            m_idx >>= 1;
+        }
+
+        /* Advance to next layer or finish */
+        st->ht_layer++;
+        if (st->ht_layer < SPHINCS_D) {
+            st->phase = SIGN_PHASE_HT_WOTS_GRIND;
+        } else {
+            st->phase = SIGN_PHASE_DONE;
+        }
+        return SIGN_PHASE_HT_WOTS_SIGN;
+    }
+
+    case SIGN_PHASE_DONE:
+    case SIGN_PHASE_IDLE:
+    default:
+        return st->phase;
+    }
+}
+
+/* ================================================================
  * VERIFICATION (for self-test)
  * ================================================================ */
 

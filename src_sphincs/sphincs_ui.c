@@ -26,6 +26,7 @@ extern sphincs_secret_key_t sphincs_sk;
 extern uint8_t *sphincs_sig_buf;
 extern uint16_t sphincs_sig_offset;
 extern bool sphincs_sig_pending;
+extern bool sign_approved;
 
 /* Display buffers */
 static char pk_seed_hex[35];
@@ -177,41 +178,12 @@ void ui_sphincs_confirm_pubkey(void) {
 
 static void sign_review_cb(bool confirm) {
     if (confirm) {
-        /* Show spinner and register progress callback */
-        nbgl_useCaseSpinner("Preparing SPHINCS+ signature...");
-        sphincs_set_progress_callback(signing_progress_cb);
-
-        /* Point sig buffer to the shared mem_buffer pool (12KB, only used during tx parsing) */
-        extern uint8_t mem_buffer[];
-        sphincs_sig_buf = mem_buffer;
-
-        /* Sign (slow: ~20-30s on device, spinner updates during) */
-        bool ok = sphincs_sign(&sphincs_sk, pending_msg_hash, sphincs_sig_buf);
-
-        /* Unregister callback */
-        sphincs_set_progress_callback(NULL);
-
-        if (!ok) {
-            io_seproxyhal_send_status(APDU_RESPONSE_INTERNAL_ERROR, 0, true, false);
-            nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_REJECTED, ui_idle);
-            return;
-        }
-
-        /* Send first chunk */
-        sphincs_sig_offset = 0;
-        sphincs_sig_pending = true;
-        uint16_t chunk = 250;
-        if (SPHINCS_SIG_SIZE < chunk) chunk = SPHINCS_SIG_SIZE;
-
-        memcpy(G_io_apdu_buffer, sphincs_sig_buf, chunk);
-        sphincs_sig_offset = chunk;
-        if (sphincs_sig_offset >= SPHINCS_SIG_SIZE) {
-            sphincs_sig_pending = false;
-        }
-
-        io_seproxyhal_send_status(APDU_RESPONSE_OK, chunk, false, false);
+        /* Just approve — actual signing happens via chunked P1=0x04 APDUs from host */
+        sign_approved = true;
+        io_seproxyhal_send_status(APDU_RESPONSE_OK, 0, false, false);
         nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_SIGNED, ui_idle);
     } else {
+        sign_approved = false;
         io_seproxyhal_send_status(APDU_RESPONSE_CONDITION_NOT_SATISFIED, 0, true, false);
         nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_REJECTED, ui_idle);
     }

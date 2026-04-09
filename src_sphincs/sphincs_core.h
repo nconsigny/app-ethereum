@@ -130,6 +130,64 @@ bool sphincs_sign(const sphincs_secret_key_t *sk,
                   uint8_t sig[SPHINCS_SIG_SIZE]);
 
 /* ================================================================
+ * Chunked signing — one phase per APDU call
+ *
+ * Phases: R_GRIND → FORS(×13) → HT_LAYER(×2, each: WOTS_GRIND →
+ *         SUBTREE_LEAF(×256) → WOTS_SIGN) → DONE
+ * ================================================================ */
+
+typedef enum {
+    SIGN_PHASE_IDLE = 0,
+    SIGN_PHASE_R_GRIND,
+    SIGN_PHASE_FORS,         /* step = tree index 0..12 */
+    SIGN_PHASE_HT_WOTS_GRIND,/* step = layer 0..1 */
+    SIGN_PHASE_HT_SUBTREE,   /* step = leaf index 0..255 */
+    SIGN_PHASE_HT_WOTS_SIGN, /* step = layer */
+    SIGN_PHASE_DONE,
+} sphincs_sign_phase_t;
+
+typedef struct {
+    /* Input */
+    uint8_t msg_hash[32];
+
+    /* Signing state */
+    sphincs_sign_phase_t phase;
+    uint32_t step;          /* sub-step within phase */
+    uint32_t ht_layer;      /* current HT layer (0 or 1) */
+
+    /* Intermediate values */
+    uint8_t R[SPHINCS_N];
+    uint8_t digest[32];
+    uint8_t fors_roots[SPHINCS_K][SPHINCS_N];
+    uint8_t current_node[SPHINCS_N]; /* node flowing through HT */
+    uint32_t ht_idx;
+    uint32_t idx_tree;
+    uint32_t idx_leaf;
+
+    /* WOTS grind results per layer */
+    uint32_t wots_count;
+    uint8_t wots_digest[32];
+    uint8_t wots_digits[SPHINCS_L];
+
+    /* Subtree build state (reuse keygen pattern) */
+    sphincs_keygen_state_t subtree_state;
+
+    /* Signature buffer offset */
+    size_t sig_off;
+} sphincs_sign_state_t;
+
+/** Init chunked signing. Call after user confirms. */
+void sphincs_sign_init(sphincs_sign_state_t *st,
+                       const sphincs_secret_key_t *sk,
+                       const uint8_t msg_hash[32]);
+
+/** Execute one signing step. Returns current phase.
+ *  Call repeatedly until phase == SIGN_PHASE_DONE. */
+sphincs_sign_phase_t sphincs_sign_step(sphincs_sign_state_t *st,
+                                        const sphincs_secret_key_t *sk,
+                                        uint8_t *sig);
+
+/* ================================================================
  * Verification (for self-test only; on-chain verifier is the contract)
  * ================================================================ */
 
