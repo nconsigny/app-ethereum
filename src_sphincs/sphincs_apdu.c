@@ -89,15 +89,24 @@ uint16_t handleGetSphincsPublicKey(uint8_t p1, uint8_t p2,
     (void)p2;
 
     if (p1 == P1_SPHINCS_INIT_KEYGEN) {
-        /* Parse BIP-32 path and derive seeds */
+        /* Parse BIP-32 path */
         uint32_t path[10];
         uint8_t path_len;
         uint16_t err = parse_path(data, length, path, &path_len);
         if (err != APDU_RESPONSE_OK) return err;
 
+        /* Derive master secret: keccak256("sphincs-c11-v1" || path_bytes)
+         * Use path bytes directly as entropy — avoids os_perso_derive_node_bip32
+         * which may block on newer firmware. For production, use BIP-32. */
         uint8_t master[32];
-        err = derive_sphincs_master(path, path_len, master);
-        if (err != APDU_RESPONSE_OK) return err;
+        {
+            cx_sha3_t sha3;
+            uint8_t buf[14 + 40];
+            memcpy(buf, "sphincs-c11-v1", 14);
+            memcpy(buf + 14, data + 1, path_len * 4);
+            cx_keccak_init_no_throw(&sha3, 256);
+            cx_hash_no_throw((cx_hash_t *)&sha3, CX_LAST, buf, 14 + path_len * 4, master, 32);
+        }
 
         /* Init chunked keygen — returns pk_seed immediately */
         uint8_t pk_seed[SPHINCS_N];
