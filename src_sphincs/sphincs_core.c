@@ -338,9 +338,10 @@ static void build_fors_tree_auth(const uint8_t seed[SPHINCS_N],
  * WOTS keygen: compute WOTS public key for a leaf
  * ================================================================ */
 
-static void wots_keygen_pk(const uint8_t seed[SPHINCS_N],
-                           const uint8_t sk_seed[32],
-                           uint32_t layer, uint64_t tree, uint32_t kp,
+/* Non-static for debug access */
+void wots_keygen_pk(const uint8_t seed[SPHINCS_N],
+                    const uint8_t sk_seed[32],
+                    uint32_t layer, uint64_t tree, uint32_t kp,
                            uint8_t pk[SPHINCS_N]) {
     uint8_t pk_elements[SPHINCS_L][SPHINCS_N];
     uint8_t adrs[32];

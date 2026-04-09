@@ -130,6 +130,17 @@ uint16_t handleGetSphincsPublicKey(uint8_t p1, uint8_t p2,
         return APDU_RESPONSE_OK;
     }
 
+    if (p1 == 0x05) {
+        /* DEBUG: return WOTS PK[0] at (layer=1, tree=0, kp=0) for cross-validation */
+        if (!keygen_in_progress) return APDU_RESPONSE_CONDITION_NOT_SATISFIED;
+        extern void wots_keygen_pk(const uint8_t *, const uint8_t *, uint32_t, uint64_t, uint32_t, uint8_t *);
+        uint8_t dbg_pk[SPHINCS_N];
+        wots_keygen_pk(keygen_state.seed, keygen_state.sk_seed, 1, 0, 0, dbg_pk);
+        memcpy(G_io_apdu_buffer, dbg_pk, SPHINCS_N);
+        *tx = SPHINCS_N;
+        return APDU_RESPONSE_OK;
+    }
+
     if (p1 == P1_SPHINCS_KEYGEN_STEP) {
         if (!keygen_in_progress) return APDU_RESPONSE_CONDITION_NOT_SATISFIED;
 
