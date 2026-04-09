@@ -430,12 +430,19 @@ static void build_subtree_sign(const uint8_t seed[SPHINCS_N],
         uint8_t node[SPHINCS_N];
         memcpy(node, leaf, SPHINCS_N);
 
+        /* Level 0: check if this leaf is the auth sibling */
+        if (i == ((target_leaf >> 0) ^ 1)) {
+            memcpy(keep[0], node, SPHINCS_N);
+        }
+
         while ((idx & 1) == 1 && stack_top > 0) {
-            /* Before merging, check if the node being consumed is an auth sibling */
-            uint32_t target_at_level = target_leaf >> level;
-            if ((idx ^ 1) == target_at_level) {
-                /* This is the auth node for this level — but it's the left child (stack top) */
+            /* Check both children before merging */
+            uint32_t left_idx = idx ^ 1;
+            if (left_idx == ((target_leaf >> level) ^ 1)) {
                 memcpy(keep[level], stack[stack_top - 1], SPHINCS_N);
+            }
+            if (idx == ((target_leaf >> level) ^ 1)) {
+                memcpy(keep[level], node, SPHINCS_N);
             }
 
             uint32_t pi = idx >> 1;
@@ -444,14 +451,16 @@ static void build_subtree_sign(const uint8_t seed[SPHINCS_N],
             stack_top--;
             idx >>= 1;
             level++;
-        }
 
-        /* Check if this node is an auth sibling at current level */
-        {
-            uint32_t target_at_level = target_leaf >> (level);
-            if (i == (target_at_level ^ 1)) {
+            /* After merge: check if merged node is auth sibling at new level */
+            if (idx == ((target_leaf >> level) ^ 1)) {
                 memcpy(keep[level], node, SPHINCS_N);
             }
+        }
+
+        /* Before push: check if node is auth sibling at current level */
+        if (idx == ((target_leaf >> level) ^ 1)) {
+            memcpy(keep[level], node, SPHINCS_N);
         }
 
         memcpy(stack[stack_top], node, SPHINCS_N);
@@ -959,7 +968,14 @@ sphincs_sign_phase_t sphincs_sign_step(sphincs_sign_state_t *st,
     }
 
     case SIGN_PHASE_HT_SUBTREE: {
-        /* Build one leaf of the subtree + collect auth path siblings inline */
+        /* Build one leaf of the subtree + collect auth path siblings inline.
+         *
+         * Auth path rule: at each level h, the auth sibling for target leaf T
+         * is the node at index (T >> h) ^ 1. We capture it when:
+         * - A leaf is pushed and it IS the sibling (at level 0)
+         * - A merged node is pushed and it IS the sibling (at higher levels)
+         * - A stack element is about to be merged and it IS the sibling
+         */
         sphincs_keygen_state_t *sub = &st->subtree_state;
         uint32_t layer = st->ht_layer;
         uint32_t target = st->idx_leaf;
@@ -976,13 +992,22 @@ sphincs_sign_phase_t sphincs_sign_step(sphincs_sign_state_t *st,
             uint8_t node[SPHINCS_N];
             memcpy(node, leaf, SPHINCS_N);
 
-            while ((idx & 1) == 1 && sub->stack_top > 0) {
-                if (sub->stack_top == 0) break;
+            /* At level 0: if this leaf is the auth sibling, capture it */
+            if (i == ((target >> 0) ^ 1)) {
+                memcpy(st->auth_path[0], node, SPHINCS_N);
+            }
 
-                /* Before merging, check if the stack top is an auth sibling */
-                uint32_t target_at_level = target >> level;
-                if ((idx ^ 1) == target_at_level) {
+            while ((idx & 1) == 1 && sub->stack_top > 0) {
+                /* stack[top-1] is the left child, node is the right child.
+                 * The left child's index at this level is (idx ^ 1) = idx - 1.
+                 * Check if the left child is the auth sibling for target. */
+                uint32_t left_idx = idx ^ 1;  /* = idx - 1 since idx is odd */
+                if (left_idx == ((target >> level) ^ 1)) {
                     memcpy(st->auth_path[level], sub->stack[sub->stack_top - 1], SPHINCS_N);
+                }
+                /* Also check if the right child (node) is the auth sibling */
+                if (idx == ((target >> level) ^ 1)) {
+                    memcpy(st->auth_path[level], node, SPHINCS_N);
                 }
 
                 uint32_t pi = idx >> 1;
@@ -991,14 +1016,16 @@ sphincs_sign_phase_t sphincs_sign_step(sphincs_sign_state_t *st,
                 sub->stack_top--;
                 idx >>= 1;
                 level++;
-            }
 
-            /* Check if this node itself is an auth sibling before pushing */
-            {
-                uint32_t target_at_level = target >> level;
-                if (i == (target_at_level ^ 1)) {
+                /* After merge: node is now at `level`. Check if it's the auth sibling. */
+                if (idx == ((target >> level) ^ 1)) {
                     memcpy(st->auth_path[level], node, SPHINCS_N);
                 }
+            }
+
+            /* Node is about to be pushed at `level`. If it's the auth sibling, capture. */
+            if (idx == ((target >> level) ^ 1)) {
+                memcpy(st->auth_path[level], node, SPHINCS_N);
             }
 
             if (sub->stack_top < SPHINCS_SUBTREE_H + 2) {
