@@ -34,4 +34,4 @@ uint16_t handleGetSphincsPublicKey(uint8_t p1, uint8_t p2,
 
 uint16_t handleSphincsSign(uint8_t p1, uint8_t p2,
                             const uint8_t *data, uint8_t length,
-                            unsigned int *flags);
+                            unsigned int *flags, unsigned int *tx);

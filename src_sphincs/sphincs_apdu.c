@@ -171,7 +171,7 @@ uint16_t handleGetSphincsPublicKey(uint8_t p1, uint8_t p2,
 
 uint16_t handleSphincsSign(uint8_t p1, uint8_t p2,
                             const uint8_t *data, uint8_t length,
-                            unsigned int *flags) {
+                            unsigned int *flags, unsigned int *tx) {
     (void)p2;
 
     if (p1 == P1_SPHINCS_SIGN_CHUNK) {
@@ -189,10 +189,8 @@ uint16_t handleSphincsSign(uint8_t p1, uint8_t p2,
             sphincs_sig_offset = 0;
         }
 
-        U2BE_ENCODE(G_io_apdu_buffer, chunk, APDU_RESPONSE_OK);
-        io_exchange(CHANNEL_APDU | IO_RETURN_AFTER_TX, chunk + 2);
-        *flags |= IO_ASYNCH_REPLY;
-        return APDU_NO_RESPONSE;
+        *tx = chunk;
+        return APDU_RESPONSE_OK;
     }
 
     if (p1 == P1_SPHINCS_SIGN_STEP) {
@@ -219,10 +217,8 @@ uint16_t handleSphincsSign(uint8_t p1, uint8_t p2,
         G_io_apdu_buffer[1] = (uint8_t)(sign_state.step & 0xFF);
         G_io_apdu_buffer[2] = (uint8_t)sign_state.ht_layer;
         G_io_apdu_buffer[3] = (phase == SIGN_PHASE_DONE) ? 1 : 0;
-        U2BE_ENCODE(G_io_apdu_buffer, 4, APDU_RESPONSE_OK);
-        io_exchange(CHANNEL_APDU | IO_RETURN_AFTER_TX, 6);
-        *flags |= IO_ASYNCH_REPLY;
-        return APDU_NO_RESPONSE;
+        *tx = 4;
+        return APDU_RESPONSE_OK;
     }
 
     /* P1=0x00: parse path + msg_hash, show confirmation */
