@@ -14,6 +14,18 @@
 /* Secure zeroize */
 #define ZEROIZE(ptr, len) explicit_bzero((ptr), (len))
 
+/* Heartbeat: keep USB alive during long computations.
+ * Must be called at least every ~2 seconds to prevent watchdog. */
+extern void io_seproxyhal_io_heartbeat(void);
+static uint32_t g_heartbeat_counter = 0;
+
+static inline void heartbeat(void) {
+    /* Call heartbeat every ~64 keccak calls (~30-50ms on real HW) */
+    if ((++g_heartbeat_counter & 0x3F) == 0) {
+        io_seproxyhal_io_heartbeat();
+    }
+}
+
 /* ================================================================
  * Progress callback
  * ================================================================ */
@@ -128,7 +140,8 @@ static void chain_hash(const uint8_t seed[SPHINCS_N],
                        uint32_t start, uint32_t steps) {
     for (uint32_t i = 0; i < steps; i++) {
         sphincs_set_hash_address(adrs, start + i);
-        sphincs_th(seed, adrs, val, val);  /* val = Th(seed, adrs, val) */
+        sphincs_th(seed, adrs, val, val);
+        heartbeat();
     }
 }
 
@@ -196,6 +209,7 @@ static bool wots_find_count(const uint8_t seed[SPHINCS_N],
 
         wots_digest(seed, layer, tree, kp, msg_hash, count, digest);
         extract_digits(digest, digits);
+        heartbeat();
 
         uint32_t sum = 0;
         for (int i = 0; i < SPHINCS_L; i++) sum += digits[i];
@@ -282,6 +296,7 @@ static void build_fors_tree_auth(const uint8_t seed[SPHINCS_N],
                 fors_secret(sk_seed, tree_idx, leaf_j, s);
                 sphincs_make_adrs(adrs, 0, 0, ADRS_FORS_TREE, tree_idx, 0, 0, leaf_j);
                 sphincs_th(seed, adrs, s, node);
+                heartbeat();
 
                 /* Merge with stack while the current tree position allows */
                 uint32_t tree_idx_j = leaf_j;
@@ -363,9 +378,7 @@ static void build_subtree_root(const uint8_t seed[SPHINCS_N],
     uint32_t stack_top = 0;
 
     for (uint32_t i = 0; i < n_leaves; i++) {
-        if ((i & 0x1F) == 0) { /* every 32 leaves */
-            report_progress(SPHINCS_PHASE_KEYGEN_WOTS, i, n_leaves);
-        }
+        report_progress(SPHINCS_PHASE_KEYGEN_WOTS, i, n_leaves);
         uint8_t leaf[SPHINCS_N];
         wots_keygen_pk(seed, sk_seed, layer, tree, i, leaf);
 
@@ -478,6 +491,7 @@ static bool grind_R(const uint8_t seed[SPHINCS_N],
         /* digest = H_msg(seed, root, R, message) */
         uint8_t digest[32];
         sphincs_h_msg(seed, root, R_out, message, digest);
+        heartbeat();
 
         /* Check forced-zero: last FORS index (bits 132..142) must be 0 */
         /* Extract bits 132..142 from big-endian digest */
