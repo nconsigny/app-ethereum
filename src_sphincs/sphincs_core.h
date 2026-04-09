@@ -83,6 +83,33 @@ void sphincs_keygen(const uint8_t master_secret[32],
                     sphincs_public_key_t *pk);
 
 /* ================================================================
+ * Chunked keygen — one WOTS PK per call, device-friendly
+ * ================================================================ */
+
+/** Keygen state for incremental computation */
+typedef struct {
+    uint8_t seed[SPHINCS_N];
+    uint8_t sk_seed[SPHINCS_SK_SEED_SIZE];
+    uint8_t stack[SPHINCS_SUBTREE_H + 1][SPHINCS_N];
+    uint32_t stack_top;
+    uint32_t leaf_idx;  /* next leaf to compute, 0..255 */
+    bool done;
+} sphincs_keygen_state_t;
+
+/** Initialize chunked keygen from master secret. Derives seeds. */
+void sphincs_keygen_init(const uint8_t master_secret[32],
+                         sphincs_keygen_state_t *state,
+                         uint8_t pk_seed_out[SPHINCS_N]);
+
+/** Compute one WOTS PK leaf. Returns leaf_idx processed (0-255).
+ *  Call 256 times (once per APDU). */
+uint32_t sphincs_keygen_step(sphincs_keygen_state_t *state);
+
+/** Finalize: extract root from treehash stack. */
+void sphincs_keygen_finalize(sphincs_keygen_state_t *state,
+                             uint8_t pk_root_out[SPHINCS_N]);
+
+/* ================================================================
  * Signing
  * ================================================================ */
 

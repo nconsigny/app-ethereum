@@ -55,7 +55,7 @@ def send_apdu(dongle, ins, p1=0, p2=0, data=b"", timeout=120):
 # ============================================================
 
 def cmd_getkey():
-    """Get SPHINCS+ C11 public key from device."""
+    """Get SPHINCS+ C11 public key via chunked keygen protocol."""
     print("Connecting to Ledger...")
     dongle = getDongle(True)
 
@@ -63,20 +63,37 @@ def cmd_getkey():
     resp = send_apdu(dongle, INS_GET_APP_CONFIG)
     print(f"App version: {resp[1]}.{resp[2]}.{resp[3]}")
 
-    print("\nRequesting SPHINCS+ public key (this takes ~6-9 seconds for keygen)...")
-    print("Watch the device screen for progress.")
-    t0 = time.time()
-
+    # Step 1: Init keygen — returns pk_seed instantly
+    print("\nInitializing SPHINCS+ keygen...")
     path_data = encode_path(BIP32_PATH)
     resp = send_apdu(dongle, INS_SPHINCS_GET_PUBLIC_KEY, p1=0x00, data=path_data)
+    pk_seed = bytes(resp[:16])
+    print(f"pk_seed: 0x{pk_seed.hex()}")
+
+    # Step 2: Compute 256 WOTS leaves, one per APDU (~300ms each = ~77s total)
+    print(f"\nComputing 256 WOTS public keys (one per APDU, ~300ms each)...")
+    t0 = time.time()
+    for i in range(256):
+        resp = send_apdu(dongle, INS_SPHINCS_GET_PUBLIC_KEY, p1=0x02)
+        leaf_idx = resp[0]
+        done = resp[2]
+        if (i + 1) % 16 == 0 or done:
+            elapsed = time.time() - t0
+            rate = (i + 1) / elapsed if elapsed > 0 else 0
+            eta = (256 - i - 1) / rate if rate > 0 else 0
+            print(f"  Leaf {i+1}/256 ({elapsed:.1f}s, ~{eta:.0f}s remaining)")
+        if done:
+            break
+
+    # Step 3: Finalize — get pk_root
+    print("Finalizing keygen...")
+    resp = send_apdu(dongle, INS_SPHINCS_GET_PUBLIC_KEY, p1=0x03)
+    pk_seed_final = bytes(resp[:16])
+    pk_root = bytes(resp[16:32])
 
     elapsed = time.time() - t0
-    print(f"Key derived in {elapsed:.1f}s")
-
-    pk_seed = resp[:16]
-    pk_root = resp[16:32]
-
-    print(f"\npk_seed: 0x{pk_seed.hex()}")
+    print(f"\nKeygen complete in {elapsed:.1f}s")
+    print(f"pk_seed: 0x{pk_seed.hex()}")
     print(f"pk_root: 0x{pk_root.hex()}")
     print(f"\nAs bytes32 (padded):")
     print(f"  pk_seed: 0x{pk_seed.hex()}{'0' * 32}")

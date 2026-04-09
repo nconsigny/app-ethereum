@@ -587,6 +587,65 @@ void sphincs_keygen(const uint8_t master_secret[32],
 }
 
 /* ================================================================
+ * Chunked keygen — one WOTS PK per APDU call
+ * ================================================================ */
+
+void sphincs_keygen_init(const uint8_t master_secret[32],
+                         sphincs_keygen_state_t *state,
+                         uint8_t pk_seed_out[SPHINCS_N]) {
+    uint8_t entropy[32];
+    derive_entropy(master_secret, entropy);
+    derive_pk_seed(entropy, state->seed);
+    derive_sk_seed(entropy, state->sk_seed);
+    ZEROIZE(entropy, 32);
+
+    memcpy(pk_seed_out, state->seed, SPHINCS_N);
+    state->stack_top = 0;
+    state->leaf_idx = 0;
+    state->done = false;
+}
+
+uint32_t sphincs_keygen_step(sphincs_keygen_state_t *state) {
+    if (state->done) return 256;
+
+    uint32_t i = state->leaf_idx;
+    uint8_t adrs[32];
+
+    /* Compute one WOTS public key (layer=1, tree=0) */
+    uint8_t leaf[SPHINCS_N];
+    wots_keygen_pk(state->seed, state->sk_seed, 1, 0, i, leaf);
+
+    /* Treehash: merge into stack */
+    uint32_t idx = i;
+    uint32_t level = 0;
+    uint8_t node[SPHINCS_N];
+    memcpy(node, leaf, SPHINCS_N);
+
+    while (level < state->stack_top && (idx & 1) == 1) {
+        uint32_t pi = idx >> 1;
+        sphincs_make_adrs(adrs, 1, 0, ADRS_TREE, 0, 0, level + 1, pi);
+        sphincs_th_pair(state->seed, adrs, state->stack[state->stack_top - 1], node, node);
+        state->stack_top--;
+        idx >>= 1;
+        level++;
+    }
+    memcpy(state->stack[state->stack_top], node, SPHINCS_N);
+    state->stack_top++;
+
+    state->leaf_idx = i + 1;
+    if (state->leaf_idx >= (1u << SPHINCS_SUBTREE_H)) {
+        state->done = true;
+    }
+
+    return i;
+}
+
+void sphincs_keygen_finalize(sphincs_keygen_state_t *state,
+                             uint8_t pk_root_out[SPHINCS_N]) {
+    memcpy(pk_root_out, state->stack[0], SPHINCS_N);
+}
+
+/* ================================================================
  * SIGNING
  * ================================================================ */
 
