@@ -64,4 +64,4 @@
 /* H_msg domain separator (last word = 0xFF...FF for 160-byte hash) */
 #define HMSG_DOMAIN_BYTE  0xFF
 
-#endif  /* guard added by convention; pragma once suffices */
+/* end of sphincs_params.h */

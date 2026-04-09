@@ -8,24 +8,16 @@
 #include "sphincs_hash.h"
 #include <string.h>
 
-#ifdef HAVE_LEDGER_CX
 #include "cx.h"
-#endif
 
 /* ================================================================
  * keccak256 wrapper
  * ================================================================ */
 
 void sphincs_keccak256(const uint8_t *data, size_t len, uint8_t out[32]) {
-#ifdef HAVE_LEDGER_CX
     cx_sha3_t sha3;
     cx_keccak_init_no_throw(&sha3, 256);
     cx_hash_no_throw((cx_hash_t *)&sha3, CX_LAST, data, len, out, 32);
-#else
-    /* Host fallback: link against a keccak library for testing */
-    extern void keccak256_host(const uint8_t *, size_t, uint8_t *);
-    keccak256_host(data, len, out);
-#endif
 }
 
 /* ================================================================
@@ -132,7 +124,6 @@ void sphincs_th_multi(const uint8_t seed[SPHINCS_N],
     uint8_t hash[32];
     uint8_t word[32];
 
-#ifdef HAVE_LEDGER_CX
     cx_sha3_t sha3;
     cx_keccak_init_no_throw(&sha3, 256);
 
@@ -146,20 +137,6 @@ void sphincs_th_multi(const uint8_t seed[SPHINCS_N],
     }
 
     cx_hash_no_throw((cx_hash_t *)&sha3, CX_LAST, NULL, 0, hash, 32);
-#else
-    /* Host fallback: build buffer (for testing, count is bounded by SPHINCS_L=43) */
-    uint8_t buf[32 + 32 + 43 * 32]; /* max: seed + adrs + 43 values */
-    size_t off = 0;
-    pad_n_to_32(buf, seed);
-    off += 32;
-    memcpy(buf + off, adrs, 32);
-    off += 32;
-    for (size_t i = 0; i < count; i++) {
-        pad_n_to_32(buf + off, vals[i]);
-        off += 32;
-    }
-    sphincs_keccak256(buf, off, hash);
-#endif
 
     memcpy(out, hash, SPHINCS_N);
 }

@@ -12,7 +12,6 @@
 #include <stdint.h>
 
 /* Ledger SDK includes */
-#ifdef HAVE_LEDGER_CX
 #include "os.h"
 #include "cx.h"
 #include "crypto_helpers.h"
@@ -20,7 +19,6 @@
 #include "apdu_constants.h"
 
 extern uint8_t G_io_apdu_buffer[];
-#endif
 
 /* ================================================================
  * Static state for SPHINCS+ operations
@@ -49,7 +47,6 @@ static bool sphincs_sig_pending = false;
  *   3. Feed master into sphincs_keygen()
  * ================================================================ */
 
-#ifdef HAVE_LEDGER_CX
 static uint16_t derive_sphincs_master(const uint32_t *path, uint8_t path_len,
                                        uint8_t master[32]) {
     uint8_t privkey[32];
@@ -84,7 +81,6 @@ static uint16_t derive_sphincs_master(const uint32_t *path, uint8_t path_len,
 
     return APDU_RESPONSE_OK;
 }
-#endif
 
 /* Check if cached path matches */
 static bool path_matches(const uint32_t *path, uint8_t len) {
@@ -127,32 +123,19 @@ uint16_t handleGetSphincsPublicKey(uint8_t p1, uint8_t p2,
 
     /* Use cached key if path matches */
     if (!path_matches(path, path_len)) {
-#ifdef HAVE_LEDGER_CX
         uint8_t master[32];
         uint16_t err = derive_sphincs_master(path, path_len, master);
         if (err != APDU_RESPONSE_OK) return err;
 
         sphincs_keygen(master, &sphincs_sk, &sphincs_pk);
         explicit_bzero(master, 32);
-#else
-        /* Host testing: use path bytes as entropy */
-        uint8_t master[32];
-        memset(master, 0, 32);
-        memcpy(master, data + 1, path_len * 4 < 32 ? path_len * 4 : 32);
-        sphincs_keygen(master, &sphincs_sk, &sphincs_pk);
-#endif
         cache_path(path, path_len);
     }
 
     /* Write pk_seed || pk_root to output buffer */
-#ifdef HAVE_LEDGER_CX
     memcpy(G_io_apdu_buffer, sphincs_pk.pk_seed, SPHINCS_N);
     memcpy(G_io_apdu_buffer + SPHINCS_N, sphincs_pk.pk_root, SPHINCS_N);
     return APDU_RESPONSE_OK; /* caller sends 32 bytes */
-#else
-    (void)0; /* handled by test framework */
-    return 0x9000;
-#endif
 }
 
 /* ================================================================
@@ -183,9 +166,7 @@ uint16_t handleSphincsSign(uint8_t p1, uint8_t p2,
         uint16_t remaining = SPHINCS_SIG_SIZE - sphincs_sig_offset;
         uint16_t chunk = remaining < SPHINCS_CHUNK_SIZE ? remaining : SPHINCS_CHUNK_SIZE;
 
-#ifdef HAVE_LEDGER_CX
         memcpy(G_io_apdu_buffer, sphincs_sig_buf + sphincs_sig_offset, chunk);
-#endif
         sphincs_sig_offset += chunk;
 
         if (sphincs_sig_offset >= SPHINCS_SIG_SIZE) {
@@ -217,19 +198,12 @@ uint16_t handleSphincsSign(uint8_t p1, uint8_t p2,
 
     /* Derive key if not cached */
     if (!path_matches(path, path_len)) {
-#ifdef HAVE_LEDGER_CX
         uint8_t master[32];
         uint16_t err = derive_sphincs_master(path, path_len, master);
         if (err != APDU_RESPONSE_OK) return err;
 
         sphincs_keygen(master, &sphincs_sk, &sphincs_pk);
         explicit_bzero(master, 32);
-#else
-        uint8_t master[32];
-        memset(master, 0, 32);
-        memcpy(master, data + 1, path_len * 4 < 32 ? path_len * 4 : 32);
-        sphincs_keygen(master, &sphincs_sk, &sphincs_pk);
-#endif
         cache_path(path, path_len);
     }
 
@@ -245,9 +219,7 @@ uint16_t handleSphincsSign(uint8_t p1, uint8_t p2,
     uint16_t chunk = SPHINCS_CHUNK_SIZE;
     if (SPHINCS_SIG_SIZE < chunk) chunk = SPHINCS_SIG_SIZE;
 
-#ifdef HAVE_LEDGER_CX
     memcpy(G_io_apdu_buffer, sphincs_sig_buf, chunk);
-#endif
     sphincs_sig_offset = chunk;
 
     if (sphincs_sig_offset >= SPHINCS_SIG_SIZE) {

@@ -11,16 +11,8 @@
 #include "sphincs_hash.h"
 #include <string.h>
 
-/* Secure zeroize: use explicit_bzero where available */
-#ifdef HAVE_LEDGER_CX
+/* Secure zeroize */
 #define ZEROIZE(ptr, len) explicit_bzero((ptr), (len))
-#else
-static void volatile_memset(void *ptr, int val, size_t len) {
-    volatile uint8_t *p = (volatile uint8_t *)ptr;
-    while (len--) *p++ = (uint8_t)val;
-}
-#define ZEROIZE(ptr, len) volatile_memset((ptr), 0, (len))
-#endif
 
 /* ================================================================
  * Secret derivation helpers (match signer.py exactly)
