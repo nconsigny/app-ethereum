@@ -28,7 +28,11 @@ extern uint8_t G_io_apdu_buffer[];
 sphincs_secret_key_t sphincs_sk;
 sphincs_public_key_t sphincs_pk;
 
-uint8_t sphincs_sig_buf[SPHINCS_SIG_SIZE];
+/* Reuse the app's 12KB mem_buffer for the 3976-byte signature.
+ * mem_buffer is used during tx parsing but never during SPHINCS+ signing,
+ * so overlaying is safe. Saves 4KB of static RAM. */
+extern uint8_t mem_buffer[];
+uint8_t *sphincs_sig_buf;  /* set to mem_buffer at first use */
 uint16_t sphincs_sig_offset = 0;
 bool sphincs_sig_pending = false;
 

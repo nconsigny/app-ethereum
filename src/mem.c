@@ -13,7 +13,9 @@
 
 #define SIZE_MEM_BUFFER (1024 * 12)
 
-static uint8_t mem_buffer[SIZE_MEM_BUFFER] __attribute__((aligned(sizeof(intmax_t))));
+/* Non-static so SPHINCS+ can overlay its 3976-byte signature buffer here.
+ * SPHINCS+ signing never runs concurrently with tx parsing. */
+uint8_t mem_buffer[SIZE_MEM_BUFFER] __attribute__((aligned(sizeof(intmax_t))));
 static mem_ctx_t mem_ctx = NULL;
 
 #ifdef HAVE_MEMORY_PROFILING

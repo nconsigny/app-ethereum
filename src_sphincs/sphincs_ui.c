@@ -23,7 +23,7 @@ extern void io_seproxyhal_io_heartbeat(void);
 /* State from sphincs_apdu.c */
 extern sphincs_public_key_t sphincs_pk;
 extern sphincs_secret_key_t sphincs_sk;
-extern uint8_t sphincs_sig_buf[];
+extern uint8_t *sphincs_sig_buf;
 extern uint16_t sphincs_sig_offset;
 extern bool sphincs_sig_pending;
 
@@ -180,6 +180,10 @@ static void sign_review_cb(bool confirm) {
         /* Show spinner and register progress callback */
         nbgl_useCaseSpinner("Preparing SPHINCS+ signature...");
         sphincs_set_progress_callback(signing_progress_cb);
+
+        /* Point sig buffer to the shared mem_buffer pool (12KB, only used during tx parsing) */
+        extern uint8_t mem_buffer[];
+        sphincs_sig_buf = mem_buffer;
 
         /* Sign (slow: ~20-30s on device, spinner updates during) */
         bool ok = sphincs_sign(&sphincs_sk, pending_msg_hash, sphincs_sig_buf);
