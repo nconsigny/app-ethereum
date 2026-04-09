@@ -302,7 +302,7 @@ static void build_fors_tree_auth(const uint8_t seed[SPHINCS_N],
                 /* Merge with stack while the current tree position allows */
                 uint32_t tree_idx_j = leaf_j;
                 uint32_t level = 0;
-                while (level < stack_top && (tree_idx_j & 1) == 1) {
+                while ((tree_idx_j & 1) == 1 && stack_top > 0) {
                     uint32_t pi = tree_idx_j >> 1;
                     sphincs_make_adrs(adrs, 0, 0, ADRS_FORS_TREE, tree_idx, 0, level + 1, pi);
                     sphincs_th_pair(seed, adrs, stack[stack_top - 1], node, node);
@@ -389,7 +389,7 @@ static void build_subtree_root(const uint8_t seed[SPHINCS_N],
         uint8_t node[SPHINCS_N];
         memcpy(node, leaf, SPHINCS_N);
 
-        while (level < stack_top && (idx & 1) == 1) {
+        while ((idx & 1) == 1 && stack_top > 0) {
             uint32_t pi = idx >> 1;
             sphincs_make_adrs(adrs, layer, tree, ADRS_TREE, 0, 0, level + 1, pi);
             sphincs_th_pair(seed, adrs, stack[stack_top - 1], node, node);
@@ -430,7 +430,7 @@ static void build_subtree_sign(const uint8_t seed[SPHINCS_N],
         uint8_t node[SPHINCS_N];
         memcpy(node, leaf, SPHINCS_N);
 
-        while (level < stack_top && (idx & 1) == 1) {
+        while ((idx & 1) == 1 && stack_top > 0) {
             /* Before merging, check if the node being consumed is an auth sibling */
             uint32_t target_at_level = target_leaf >> level;
             if ((idx ^ 1) == target_at_level) {
@@ -623,8 +623,7 @@ uint32_t sphincs_keygen_step(sphincs_keygen_state_t *state) {
     uint8_t node[SPHINCS_N];
     memcpy(node, leaf, SPHINCS_N);
 
-    while (level < state->stack_top && (idx & 1) == 1) {
-        if (state->stack_top == 0) break;  /* safety */
+    while ((idx & 1) == 1 && state->stack_top > 0) {
         uint32_t pi = idx >> 1;
         sphincs_make_adrs(adrs, 1, 0, ADRS_TREE, 0, 0, level + 1, pi);
         sphincs_th_pair(state->seed, adrs, state->stack[state->stack_top - 1], node, node);
@@ -977,7 +976,7 @@ sphincs_sign_phase_t sphincs_sign_step(sphincs_sign_state_t *st,
             uint8_t node[SPHINCS_N];
             memcpy(node, leaf, SPHINCS_N);
 
-            while (level < sub->stack_top && (idx & 1) == 1) {
+            while ((idx & 1) == 1 && sub->stack_top > 0) {
                 if (sub->stack_top == 0) break;
 
                 /* Before merging, check if the stack top is an auth sibling */
