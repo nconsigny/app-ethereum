@@ -178,10 +178,11 @@ void ui_sphincs_confirm_pubkey(void) {
 
 static void sign_review_cb(bool confirm) {
     if (confirm) {
-        /* Just approve — actual signing happens via chunked P1=0x04 APDUs from host */
+        /* Just approve — actual signing happens via chunked P1=0x04 APDUs from host.
+         * Do NOT show nbgl_useCaseReviewStatus here — its animation blocks the
+         * event loop and crashes when the next APDU arrives. */
         sign_approved = true;
         io_seproxyhal_send_status(APDU_RESPONSE_OK, 0, false, false);
-        nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_SIGNED, ui_idle);
     } else {
         sign_approved = false;
         io_seproxyhal_send_status(APDU_RESPONSE_CONDITION_NOT_SATISFIED, 0, true, false);
