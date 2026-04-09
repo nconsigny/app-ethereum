@@ -71,17 +71,16 @@ def cmd_getkey():
     print(f"pk_seed: 0x{pk_seed.hex()}")
 
     # Step 2: Compute 256 WOTS leaves, one per APDU (~300ms each = ~77s total)
-    print(f"\nComputing 256 WOTS public keys (one per APDU, ~300ms each)...")
+    print(f"\nComputing 256 WOTS public keys (4 per APDU step)...")
     t0 = time.time()
-    for i in range(256):
+    steps = 0
+    for i in range(256):  # max 256 steps but will break early with batching
         resp = send_apdu(dongle, INS_SPHINCS_GET_PUBLIC_KEY, p1=0x02)
-        leaf_idx = resp[0]
         done = resp[2]
-        if (i + 1) % 16 == 0 or done:
+        steps += 1
+        if steps % 8 == 0 or done:
             elapsed = time.time() - t0
-            rate = (i + 1) / elapsed if elapsed > 0 else 0
-            eta = (256 - i - 1) / rate if rate > 0 else 0
-            print(f"  Leaf {i+1}/256 ({elapsed:.1f}s, ~{eta:.0f}s remaining)")
+            print(f"  Step {steps} ({elapsed:.1f}s)")
         if done:
             break
 

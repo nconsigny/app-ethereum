@@ -18,6 +18,12 @@
 void sphincs_keccak256(const uint8_t *data, size_t len, uint8_t out[32]);
 
 /**
+ * Pre-compute padded seed for all subsequent hash operations.
+ * Call once after key derivation. Eliminates ~297K redundant pad operations.
+ */
+void sphincs_set_seed(const uint8_t seed[SPHINCS_N]);
+
+/**
  * Th(seed, adrs, input) = keccak256(seed[16] || adrs[32] || input[16]) & N_MASK
  * 3-word hash (96 bytes) -> top 16 bytes of keccak output
  */

@@ -87,19 +87,36 @@ static void pad_n_to_32(uint8_t out[32], const uint8_t in[SPHINCS_N]) {
     memset(out + SPHINCS_N, 0, 32 - SPHINCS_N);
 }
 
+/* Pre-computed padded seed — set once via sphincs_set_seed(), reused by all hash ops.
+ * Eliminates ~297K redundant pad_n_to_32 calls during signing. */
+static uint8_t g_seed_padded[32];
+static bool g_seed_set = false;
+
+void sphincs_set_seed(const uint8_t seed[SPHINCS_N]) {
+    pad_n_to_32(g_seed_padded, seed);
+    g_seed_set = true;
+}
+
+/* Static buffers for th/th_pair to avoid re-allocation on each call.
+ * Safe because SPHINCS+ is single-threaded. */
+static uint8_t g_th_buf[128];  /* max size needed (th_pair uses 128) */
+static uint8_t g_th_hash[32];
+
 void sphincs_th(const uint8_t seed[SPHINCS_N],
                 const uint8_t adrs[32],
                 const uint8_t input[SPHINCS_N],
                 uint8_t out[SPHINCS_N]) {
-    uint8_t buf[96];  /* seed(32) + adrs(32) + input(32) */
-    uint8_t hash[32];
+    if (g_seed_set) {
+        memcpy(g_th_buf, g_seed_padded, 32);
+    } else {
+        pad_n_to_32(g_th_buf, seed);
+    }
+    memcpy(g_th_buf + 32, adrs, 32);
+    memcpy(g_th_buf + 64, input, SPHINCS_N);
+    memset(g_th_buf + 64 + SPHINCS_N, 0, 32 - SPHINCS_N);
 
-    pad_n_to_32(buf, seed);
-    memcpy(buf + 32, adrs, 32);
-    pad_n_to_32(buf + 64, input);
-
-    sphincs_keccak256(buf, 96, hash);
-    memcpy(out, hash, SPHINCS_N);  /* top 16 bytes */
+    sphincs_keccak256(g_th_buf, 96, g_th_hash);
+    memcpy(out, g_th_hash, SPHINCS_N);
 }
 
 void sphincs_th_pair(const uint8_t seed[SPHINCS_N],
@@ -107,16 +124,19 @@ void sphincs_th_pair(const uint8_t seed[SPHINCS_N],
                      const uint8_t left[SPHINCS_N],
                      const uint8_t right[SPHINCS_N],
                      uint8_t out[SPHINCS_N]) {
-    uint8_t buf[128]; /* seed(32) + adrs(32) + left(32) + right(32) */
-    uint8_t hash[32];
+    if (g_seed_set) {
+        memcpy(g_th_buf, g_seed_padded, 32);
+    } else {
+        pad_n_to_32(g_th_buf, seed);
+    }
+    memcpy(g_th_buf + 32, adrs, 32);
+    memcpy(g_th_buf + 64, left, SPHINCS_N);
+    memset(g_th_buf + 64 + SPHINCS_N, 0, 32 - SPHINCS_N);
+    memcpy(g_th_buf + 96, right, SPHINCS_N);
+    memset(g_th_buf + 96 + SPHINCS_N, 0, 32 - SPHINCS_N);
 
-    pad_n_to_32(buf, seed);
-    memcpy(buf + 32, adrs, 32);
-    pad_n_to_32(buf + 64, left);
-    pad_n_to_32(buf + 96, right);
-
-    sphincs_keccak256(buf, 128, hash);
-    memcpy(out, hash, SPHINCS_N);
+    sphincs_keccak256(g_th_buf, 128, g_th_hash);
+    memcpy(out, g_th_hash, SPHINCS_N);
 }
 
 void sphincs_th_multi(const uint8_t seed[SPHINCS_N],

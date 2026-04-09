@@ -611,46 +611,57 @@ void sphincs_keygen_init(const uint8_t master_secret[32],
     ZEROIZE(entropy, 32);
 
     memcpy(pk_seed_out, state->seed, SPHINCS_N);
+    sphincs_set_seed(state->seed);  /* pre-compute padded seed for all hashing */
     state->stack_top = 0;
     state->leaf_idx = 0;
     state->done = 0;
 }
 
+#define KEYGEN_BATCH_SIZE 4  /* leaves per APDU step */
+
 uint32_t sphincs_keygen_step(sphincs_keygen_state_t *state) {
     if (state->done) return 256;
 
-    uint32_t i = state->leaf_idx;
+    uint32_t n_leaves = 1u << SPHINCS_SUBTREE_H;
+    uint32_t batch = KEYGEN_BATCH_SIZE;
+    if (state->leaf_idx + batch > n_leaves) {
+        batch = n_leaves - state->leaf_idx;
+    }
+
     uint8_t adrs[32];
 
-    /* Compute one WOTS public key (layer=1, tree=0) */
-    uint8_t leaf[SPHINCS_N];
-    wots_keygen_pk(state->seed, state->sk_seed, 1, 0, i, leaf);
+    for (uint32_t b = 0; b < batch; b++) {
+        uint32_t i = state->leaf_idx;
 
-    /* Treehash: merge into stack */
-    uint32_t idx = i;
-    uint32_t level = 0;
-    uint8_t node[SPHINCS_N];
-    memcpy(node, leaf, SPHINCS_N);
+        uint8_t leaf[SPHINCS_N];
+        wots_keygen_pk(state->seed, state->sk_seed, 1, 0, i, leaf);
 
-    while ((idx & 1) == 1 && state->stack_top > 0) {
-        uint32_t pi = idx >> 1;
-        sphincs_make_adrs(adrs, 1, 0, ADRS_TREE, 0, 0, level + 1, pi);
-        sphincs_th_pair(state->seed, adrs, state->stack[state->stack_top - 1], node, node);
-        state->stack_top--;
-        idx >>= 1;
-        level++;
+        uint32_t idx = i;
+        uint32_t level = 0;
+        uint8_t node[SPHINCS_N];
+        memcpy(node, leaf, SPHINCS_N);
+
+        while ((idx & 1) == 1 && state->stack_top > 0) {
+            uint32_t pi = idx >> 1;
+            sphincs_make_adrs(adrs, 1, 0, ADRS_TREE, 0, 0, level + 1, pi);
+            sphincs_th_pair(state->seed, adrs, state->stack[state->stack_top - 1], node, node);
+            state->stack_top--;
+            idx >>= 1;
+            level++;
+        }
+        if (state->stack_top < SPHINCS_SUBTREE_H + 2) {
+            memcpy(state->stack[state->stack_top], node, SPHINCS_N);
+            state->stack_top++;
+        }
+
+        state->leaf_idx++;
     }
-    if (state->stack_top < SPHINCS_SUBTREE_H + 2) {  /* bounds check */
-        memcpy(state->stack[state->stack_top], node, SPHINCS_N);
-        state->stack_top++;
-    }
 
-    state->leaf_idx = i + 1;
-    if (state->leaf_idx >= (1u << SPHINCS_SUBTREE_H)) {
+    if (state->leaf_idx >= n_leaves) {
         state->done = 1;
     }
 
-    return i;
+    return state->leaf_idx - 1;
 }
 
 void sphincs_keygen_finalize(sphincs_keygen_state_t *state,
@@ -831,6 +842,7 @@ void sphincs_sign_init(sphincs_sign_state_t *st,
                        const uint8_t msg_hash[32]) {
     memset(st, 0, sizeof(*st));
     memcpy(st->msg_hash, msg_hash, 32);
+    sphincs_set_seed(sk->pk_seed);  /* pre-compute padded seed */
     st->phase = SIGN_PHASE_R_GRIND;
     st->step = 0;
     st->sig_off = 0;
@@ -979,60 +991,61 @@ sphincs_sign_phase_t sphincs_sign_step(sphincs_sign_state_t *st,
         uint32_t target = st->idx_leaf;
 
         if (!sub->done) {
-            uint32_t i = sub->leaf_idx;
-            uint8_t adrs[32];
-            uint8_t leaf[SPHINCS_N];
+            /* Batch 4 leaves per APDU step to reduce USB overhead */
+            uint32_t n_leaves = 1u << SPHINCS_SUBTREE_H;
+            uint32_t batch = KEYGEN_BATCH_SIZE;
+            if (sub->leaf_idx + batch > n_leaves) batch = n_leaves - sub->leaf_idx;
 
-            wots_keygen_pk(sk->pk_seed, sk->sk_seed, layer, st->idx_tree, i, leaf);
+            for (uint32_t b = 0; b < batch; b++) {
+                uint32_t i = sub->leaf_idx;
+                uint8_t adrs[32];
+                uint8_t leaf[SPHINCS_N];
 
-            uint32_t idx = i;
-            uint32_t level = 0;
-            uint8_t node[SPHINCS_N];
-            memcpy(node, leaf, SPHINCS_N);
+                wots_keygen_pk(sk->pk_seed, sk->sk_seed, layer, st->idx_tree, i, leaf);
 
-            /* At level 0: if this leaf is the auth sibling, capture it */
-            if (i == ((target >> 0) ^ 1)) {
-                memcpy(st->auth_path[0], node, SPHINCS_N);
-            }
+                uint32_t idx = i;
+                uint32_t level = 0;
+                uint8_t node[SPHINCS_N];
+                memcpy(node, leaf, SPHINCS_N);
 
-            while ((idx & 1) == 1 && sub->stack_top > 0) {
-                /* stack[top-1] is the left child, node is the right child.
-                 * The left child's index at this level is (idx ^ 1) = idx - 1.
-                 * Check if the left child is the auth sibling for target. */
-                uint32_t left_idx = idx ^ 1;  /* = idx - 1 since idx is odd */
-                if (left_idx == ((target >> level) ^ 1)) {
-                    memcpy(st->auth_path[level], sub->stack[sub->stack_top - 1], SPHINCS_N);
+                if (i == ((target >> 0) ^ 1)) {
+                    memcpy(st->auth_path[0], node, SPHINCS_N);
                 }
-                /* Also check if the right child (node) is the auth sibling */
+
+                while ((idx & 1) == 1 && sub->stack_top > 0) {
+                    uint32_t left_idx = idx ^ 1;
+                    if (left_idx == ((target >> level) ^ 1)) {
+                        memcpy(st->auth_path[level], sub->stack[sub->stack_top - 1], SPHINCS_N);
+                    }
+                    if (idx == ((target >> level) ^ 1)) {
+                        memcpy(st->auth_path[level], node, SPHINCS_N);
+                    }
+
+                    uint32_t pi = idx >> 1;
+                    sphincs_make_adrs(adrs, layer, st->idx_tree, ADRS_TREE, 0, 0, level + 1, pi);
+                    sphincs_th_pair(sk->pk_seed, adrs, sub->stack[sub->stack_top - 1], node, node);
+                    sub->stack_top--;
+                    idx >>= 1;
+                    level++;
+
+                    if (idx == ((target >> level) ^ 1)) {
+                        memcpy(st->auth_path[level], node, SPHINCS_N);
+                    }
+                }
+
                 if (idx == ((target >> level) ^ 1)) {
                     memcpy(st->auth_path[level], node, SPHINCS_N);
                 }
 
-                uint32_t pi = idx >> 1;
-                sphincs_make_adrs(adrs, layer, st->idx_tree, ADRS_TREE, 0, 0, level + 1, pi);
-                sphincs_th_pair(sk->pk_seed, adrs, sub->stack[sub->stack_top - 1], node, node);
-                sub->stack_top--;
-                idx >>= 1;
-                level++;
-
-                /* After merge: node is now at `level`. Check if it's the auth sibling. */
-                if (idx == ((target >> level) ^ 1)) {
-                    memcpy(st->auth_path[level], node, SPHINCS_N);
+                if (sub->stack_top < SPHINCS_SUBTREE_H + 2) {
+                    memcpy(sub->stack[sub->stack_top], node, SPHINCS_N);
+                    sub->stack_top++;
                 }
+
+                sub->leaf_idx++;
             }
 
-            /* Node is about to be pushed at `level`. If it's the auth sibling, capture. */
-            if (idx == ((target >> level) ^ 1)) {
-                memcpy(st->auth_path[level], node, SPHINCS_N);
-            }
-
-            if (sub->stack_top < SPHINCS_SUBTREE_H + 2) {
-                memcpy(sub->stack[sub->stack_top], node, SPHINCS_N);
-                sub->stack_top++;
-            }
-
-            sub->leaf_idx = i + 1;
-            if (sub->leaf_idx >= (1u << SPHINCS_SUBTREE_H)) {
+            if (sub->leaf_idx >= n_leaves) {
                 sub->done = 1;
             }
 
