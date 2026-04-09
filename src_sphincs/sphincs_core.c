@@ -916,18 +916,16 @@ sphincs_sign_phase_t sphincs_sign_step(sphincs_sign_state_t *st,
         st->ht_idx = extract_ht_index(st->digest);
         st->idx_tree = st->ht_idx;
         st->ht_layer = 0;
+        st->step = 0;  /* reset step counter before entering HT */
         st->phase = SIGN_PHASE_HT_WOTS_GRIND;
         return SIGN_PHASE_FORS;
     }
 
     case SIGN_PHASE_HT_WOTS_GRIND: {
-        /* Grind WOTS counter only (~1-9s depending on luck) */
+        /* Extract leaf/tree indices for current layer and advance idx_tree */
         uint32_t layer = st->ht_layer;
-        if (st->step == 0) {
-            /* First call: extract leaf index */
-            st->idx_leaf = st->idx_tree & SPHINCS_LEAF_MASK;
-            st->idx_tree >>= SPHINCS_SUBTREE_H;
-        }
+        st->idx_leaf = st->idx_tree & SPHINCS_LEAF_MASK;
+        st->idx_tree >>= SPHINCS_SUBTREE_H;
 
         if (!wots_find_count(sk->pk_seed, layer, st->idx_tree, st->idx_leaf,
                              st->current_node,
