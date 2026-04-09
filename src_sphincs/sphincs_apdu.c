@@ -134,8 +134,8 @@ uint16_t handleGetSphincsPublicKey(uint8_t p1, uint8_t p2,
 
         /* Return: [leaf_idx(1), total(1), done(1)] */
         G_io_apdu_buffer[0] = (uint8_t)(idx & 0xFF);
-        G_io_apdu_buffer[1] = (uint8_t)((1u << SPHINCS_SUBTREE_H) - 1); /* 255 = last index */
-        G_io_apdu_buffer[2] = keygen_state.done ? 1 : 0;
+        G_io_apdu_buffer[1] = 0xFF; /* total = 255 (last index) */
+        G_io_apdu_buffer[2] = (keygen_state.done != 0) ? 0x01 : 0x00;
         *tx = 3;
         return APDU_RESPONSE_OK;
     }

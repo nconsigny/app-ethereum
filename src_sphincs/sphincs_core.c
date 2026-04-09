@@ -602,7 +602,7 @@ void sphincs_keygen_init(const uint8_t master_secret[32],
     memcpy(pk_seed_out, state->seed, SPHINCS_N);
     state->stack_top = 0;
     state->leaf_idx = 0;
-    state->done = false;
+    state->done = 0;
 }
 
 uint32_t sphincs_keygen_step(sphincs_keygen_state_t *state) {
@@ -622,6 +622,7 @@ uint32_t sphincs_keygen_step(sphincs_keygen_state_t *state) {
     memcpy(node, leaf, SPHINCS_N);
 
     while (level < state->stack_top && (idx & 1) == 1) {
+        if (state->stack_top == 0) break;  /* safety */
         uint32_t pi = idx >> 1;
         sphincs_make_adrs(adrs, 1, 0, ADRS_TREE, 0, 0, level + 1, pi);
         sphincs_th_pair(state->seed, adrs, state->stack[state->stack_top - 1], node, node);
@@ -629,12 +630,14 @@ uint32_t sphincs_keygen_step(sphincs_keygen_state_t *state) {
         idx >>= 1;
         level++;
     }
-    memcpy(state->stack[state->stack_top], node, SPHINCS_N);
-    state->stack_top++;
+    if (state->stack_top < SPHINCS_SUBTREE_H + 2) {  /* bounds check */
+        memcpy(state->stack[state->stack_top], node, SPHINCS_N);
+        state->stack_top++;
+    }
 
     state->leaf_idx = i + 1;
     if (state->leaf_idx >= (1u << SPHINCS_SUBTREE_H)) {
-        state->done = true;
+        state->done = 1;
     }
 
     return i;

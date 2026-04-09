@@ -88,12 +88,12 @@ void sphincs_keygen(const uint8_t master_secret[32],
 
 /** Keygen state for incremental computation */
 typedef struct {
+    uint32_t leaf_idx;  /* next leaf to compute, 0..255 */
+    uint32_t stack_top;
+    uint32_t done;      /* use uint32 to avoid alignment/corruption issues */
     uint8_t seed[SPHINCS_N];
     uint8_t sk_seed[SPHINCS_SK_SEED_SIZE];
-    uint8_t stack[SPHINCS_SUBTREE_H + 1][SPHINCS_N];
-    uint32_t stack_top;
-    uint32_t leaf_idx;  /* next leaf to compute, 0..255 */
-    bool done;
+    uint8_t stack[SPHINCS_SUBTREE_H + 2][SPHINCS_N]; /* +2 for safety margin */
 } sphincs_keygen_state_t;
 
 /** Initialize chunked keygen from master secret. Derives seeds. */
