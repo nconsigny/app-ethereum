@@ -172,6 +172,9 @@ typedef struct {
     /* Subtree build state (reuse keygen pattern) */
     sphincs_keygen_state_t subtree_state;
 
+    /* Auth path collected during subtree build */
+    uint8_t auth_path[SPHINCS_SUBTREE_H][SPHINCS_N];
+
     /* Signature buffer offset */
     size_t sig_off;
 } sphincs_sign_state_t;
