@@ -45,6 +45,7 @@
 #include "cmd_proxy_info.h"
 #include "commands_7702.h"
 #include "sign_message.h"
+#include "sphincs_apdu.h"
 
 tmpCtx_t tmpCtx;
 txContext_t txContext;
@@ -250,6 +251,14 @@ static uint16_t handleApdu(command_t *cmd, uint32_t *flags, uint32_t *tx) {
 
         case INS_SIGN_EIP7702_AUTHORIZATION:
             sw = handleSignEIP7702Authorization(cmd->p1, cmd->data, cmd->lc, flags);
+            break;
+
+        case INS_SPHINCS_GET_PUBLIC_KEY:
+            sw = handleGetSphincsPublicKey(cmd->p1, cmd->p2, cmd->data, cmd->lc);
+            break;
+
+        case INS_SPHINCS_SIGN:
+            sw = handleSphincsSign(cmd->p1, cmd->p2, cmd->data, cmd->lc);
             break;
 
         default:
