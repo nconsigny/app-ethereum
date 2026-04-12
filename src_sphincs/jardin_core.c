@@ -272,6 +272,10 @@ bool jardin_fors_sign(const jardin_secret_key_t *sk,
     uint8_t adrs[32];
     size_t off = 0;
 
+    /* Restore cached seed — C11 signing may have overwritten g_seed_padded
+     * with the master seed. All th/th_pair calls below need the JARDÍN seed. */
+    sphincs_set_seed(sk->pk_seed);
+
     /* Compute deterministic R */
     uint8_t R[32];
     jardin_compute_R(sk->sk_seed, message, q, R);
