@@ -75,23 +75,43 @@ def pimlico_rpc(url, method, params):
         return None, data["error"]
     return data.get("result"), None
 
-def submit_via_bundler(pimlico_url, op):
-    """Submit UserOp via Pimlico bundler."""
-    # Format UserOp for bundler JSON-RPC
+def submit_via_bundler(bundler_url, op):
+    """Submit UserOp via ERC-4337 bundler (v0.7/v0.9 JSON-RPC format)."""
+    # Unpack accountGasLimits: [verificationGasLimit(16B) || callGasLimit(16B)]
+    agl = bytes.fromhex(op["accountGasLimits"][2:])
+    vgl = int.from_bytes(agl[:16], "big")
+    cgl = int.from_bytes(agl[16:], "big")
+
+    # Unpack gasFees: [maxPriorityFeePerGas(16B) || maxFeePerGas(16B)]
+    gf = bytes.fromhex(op["gasFees"][2:])
+    mpfpg = int.from_bytes(gf[:16], "big")
+    mfpg = int.from_bytes(gf[16:], "big")
+
     userop = {
         "sender": op["sender"],
-        "nonce": op["nonce"],
-        "initCode": op["initCode"],
-        "callData": op["callData"],
-        "accountGasLimits": op["accountGasLimits"],
-        "preVerificationGas": op["preVerificationGas"],
-        "gasFees": op["gasFees"],
-        "paymasterAndData": op["paymasterAndData"],
+        "nonce": hex(int(op["nonce"], 16)),
+        "callData": op["callData"] if op["callData"] != "0x" else "0x",
+        "callGasLimit": hex(cgl),
+        "verificationGasLimit": hex(vgl),
+        "preVerificationGas": hex(int(op["preVerificationGas"], 16)),
+        "maxFeePerGas": hex(mfpg),
+        "maxPriorityFeePerGas": hex(mpfpg),
         "signature": op["signature"],
     }
 
-    print("  Sending via Pimlico bundler...")
-    result, err = pimlico_rpc(pimlico_url, "eth_sendUserOperation", [userop, ENTRYPOINT])
+    # Unpack initCode → factory + factoryData (v0.7+ format)
+    ic = op.get("initCode", "0x")
+    if ic and ic != "0x" and len(ic) > 42:
+        userop["factory"] = "0x" + ic[2:42]
+        userop["factoryData"] = "0x" + ic[42:]
+
+    # Unpack paymasterAndData (if present)
+    pmd = op.get("paymasterAndData", "0x")
+    if pmd and pmd != "0x" and len(pmd) > 42:
+        userop["paymaster"] = "0x" + pmd[2:42]
+        userop["paymasterData"] = "0x" + pmd[42:]
+
+    result, err = pimlico_rpc(bundler_url, "eth_sendUserOperation", [userop, ENTRYPOINT])
     if err:
         return None, err
 
@@ -102,7 +122,7 @@ def submit_via_bundler(pimlico_url, op):
     print("  Waiting for receipt...", end="", flush=True)
     for _ in range(60):
         time.sleep(2)
-        receipt, err = pimlico_rpc(pimlico_url, "eth_getUserOperationReceipt", [op_hash])
+        receipt, err = pimlico_rpc(bundler_url, "eth_getUserOperationReceipt", [op_hash])
         if receipt:
             tx_hash = receipt.get("receipt", {}).get("transactionHash", "")
             success = receipt.get("success", False)
@@ -145,7 +165,10 @@ def main():
     rpc = env.get("SEPOLIA_RPC_URL","")
     privkey = env.get("PRIVATE_KEY","").replace("0x","")
     pimlico_key = env.get("PIMLICO_API_KEY","")
+    etherspot_key = env.get("ETHERSPOT_API_KEY","etherspot_WJkeMWXtXQGozadQT1jgq6")
+    candide_url = "https://api.candide.dev/public/v3/11155111"
     pimlico_url = f"https://api.pimlico.io/v2/{CHAIN_ID}/rpc?apikey={pimlico_key}" if pimlico_key else ""
+    etherspot_url = f"https://testnet-rpc.etherspot.io/v2/{CHAIN_ID}?api_key={etherspot_key}"
     acct = Account.from_key(bytes.fromhex(privkey))
 
     print("Connecting to Ledger...")
@@ -221,24 +244,30 @@ def main():
     op["signature"] = "0x" + type2.hex()
     print(f"Type 2 total: {len(type2)} bytes")
 
-    # Submit
+    # Submit — try bundlers in order, fall back to self-relay
     print("Submitting...")
-    use_bundler = pimlico_url and not args.self_relay
+    submitted = False
 
-    if use_bundler:
-        result, err = submit_via_bundler(pimlico_url, op)
-        if err:
-            print(f"  Bundler error: {err.get('message', err)}")
-            print("  Falling back to self-relay...")
-            use_bundler = False
+    if not args.self_relay:
+        for name, url in [("Candide", candide_url), ("Etherspot", etherspot_url), ("Pimlico", pimlico_url)]:
+            if not url:
+                continue
+            result, err = submit_via_bundler(url, op)
+            if err:
+                msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                print(f"  {name} error: {msg}")
+                continue
+            print(f"  TX: {result['tx']}")
+            print(f"  Success: {result['success']}")
+            submitted = True
+            break
 
-    if not use_bundler:
+    if not submitted:
+        if not args.self_relay:
+            print("  All bundlers failed, falling back to self-relay...")
         tx_hash, status = submit_self_relay(rpc, privkey, op)
         print(f"  TX: {tx_hash}")
         print(f"  Status: {status}")
-    else:
-        print(f"  TX: {result['tx']}")
-        print(f"  Success: {result['success']}")
 
     print(f"\nDone. Next q={q+1} (device NVRAM already burned).")
 
