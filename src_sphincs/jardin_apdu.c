@@ -1,14 +1,15 @@
 /**
- * JARDÍN FORS+C APDU Handlers
+ * JARDÍN FORS+C APDU Handlers with NVRAM persistence
  *
- * INS 0x44: Keygen (chunked, 32 steps × ~2.5s each = ~80s total)
- * INS 0x46: Sign (single APDU, ~3s — no chunking needed!)
+ * INS 0x44: Keygen (chunked) + NVRAM state management
+ * INS 0x46: Sign (single APDU, ~3s) + auto-increment q in NVRAM
  */
 
 #include "jardin_apdu.h"
 #include "jardin_core.h"
+#include "jardin_storage.h"
 #include "sphincs_hash.h"
-#include "sphincs_core.h"  /* for sphincs_secret_key_t extern */
+#include "sphincs_core.h"
 
 #include <string.h>
 
@@ -21,7 +22,7 @@ extern uint8_t G_io_apdu_buffer[];
 extern uint8_t mem_buffer[];
 
 /* ================================================================
- * State
+ * RAM state (volatile — lost on power cycle, rebuilt from NVRAM)
  * ================================================================ */
 
 static jardin_keygen_state_t jardin_keygen_state;
@@ -29,7 +30,9 @@ static jardin_secret_key_t jardin_sk;
 static jardin_public_key_t jardin_pk;
 static bool jardin_key_ready = false;
 
-/* Signature chunks stored in mem_buffer (16KB, shared with tx parsing) */
+/* Track the r used for current keygen (for NVRAM save) */
+static uint8_t jardin_current_r[32];
+
 static uint16_t jardin_sig_offset = 0;
 static uint16_t jardin_sig_len = 0;
 static bool jardin_sig_pending = false;
@@ -37,11 +40,7 @@ static bool jardin_sig_pending = false;
 #define JARDIN_CHUNK_SIZE 250
 
 /* ================================================================
- * INS 0x44: JARDÍN Keygen
- *
- * P1=0x00: init — data = [r(32)] → returns pk_seed (16 bytes)
- * P1=0x02: step — compute one FORS PK → returns [step, done]
- * P1=0x03: finalize — build spine → returns pk_seed || pk_root
+ * INS 0x44: JARDÍN Keygen + State Management
  * ================================================================ */
 
 uint16_t handleJardinKeygen(uint8_t p1, uint8_t p2,
@@ -52,12 +51,9 @@ uint16_t handleJardinKeygen(uint8_t p1, uint8_t p2,
     if (p1 == P1_JARDIN_KEYGEN_INIT) {
         if (length < 32) return APDU_RESPONSE_WRONG_DATA_LENGTH;
 
-        /* Data = [r(32)] — the random slot identifier */
         const uint8_t *r = data;
+        memcpy(jardin_current_r, r, 32);
 
-        /* We need master_sk_seed. For now, derive from the SPHINCS+ C11 key
-         * (which was already derived via the BIP-32 path during C11 keygen).
-         * If C11 key hasn't been derived yet, use r as entropy directly. */
         extern sphincs_secret_key_t sphincs_sk;
         uint8_t master_sk[32];
         memcpy(master_sk, sphincs_sk.sk_seed, 32);
@@ -101,9 +97,65 @@ uint16_t handleJardinKeygen(uint8_t p1, uint8_t p2,
         memcpy(jardin_pk.pk_root, pk_root, JARDIN_N);
         jardin_key_ready = true;
 
+        /* Save to NVRAM — persists across power cycles */
+        jardin_nvram_save(jardin_current_r,
+                          jardin_pk.pk_seed, pk_root, 1);
+
         memcpy(G_io_apdu_buffer, jardin_pk.pk_seed, JARDIN_N);
         memcpy(G_io_apdu_buffer + JARDIN_N, pk_root, JARDIN_N);
         *tx = 2 * JARDIN_N;
+        return APDU_RESPONSE_OK;
+    }
+
+    if (p1 == P1_JARDIN_LOAD_NVRAM) {
+        /* Load saved slot from NVRAM — no keygen needed!
+         * Still needs C11 keygen first (for master sk_seed to re-derive JARDÍN sk). */
+        if (!jardin_nvram_is_valid()) return APDU_RESPONSE_CONDITION_NOT_SATISFIED;
+
+        const jardin_nvram_t *nv = jardin_nvram_get();
+
+        /* Re-derive sub-key from master + saved r */
+        extern sphincs_secret_key_t sphincs_sk;
+        uint8_t master_sk[32];
+        memcpy(master_sk, sphincs_sk.sk_seed, 32);
+
+        uint8_t pk_seed[JARDIN_N];
+        jardin_keygen_init(master_sk, nv->r, &jardin_keygen_state, pk_seed);
+        explicit_bzero(master_sk, 32);
+
+        /* We need to rebuild the full keygen state (FORS PKs + spine)
+         * because signing needs the spine/fors_pks for auth paths.
+         * This still requires the 32 keygen steps. Return pk_seed + q
+         * to tell the client to run the steps. */
+        memcpy(jardin_current_r, nv->r, 32);
+        memcpy(jardin_sk.pk_seed, pk_seed, JARDIN_N);
+        memcpy(jardin_pk.pk_seed, nv->sub_pk_seed, JARDIN_N);
+        memcpy(jardin_pk.pk_root, nv->sub_pk_root, JARDIN_N);
+
+        /* Return: pk_seed(16) || pk_root(16) || q(1) || r(32) */
+        memcpy(G_io_apdu_buffer, nv->sub_pk_seed, JARDIN_N);
+        memcpy(G_io_apdu_buffer + JARDIN_N, nv->sub_pk_root, JARDIN_N);
+        G_io_apdu_buffer[32] = nv->q;
+        memcpy(G_io_apdu_buffer + 33, nv->r, 32);
+        *tx = 65;
+        return APDU_RESPONSE_OK;
+    }
+
+    if (p1 == P1_JARDIN_GET_STATE) {
+        /* Return current NVRAM state without modifying anything */
+        if (!jardin_nvram_is_valid()) {
+            G_io_apdu_buffer[0] = 0; /* not initialized */
+            *tx = 1;
+            return APDU_RESPONSE_OK;
+        }
+
+        const jardin_nvram_t *nv = jardin_nvram_get();
+        G_io_apdu_buffer[0] = 1; /* initialized */
+        G_io_apdu_buffer[1] = nv->q;
+        memcpy(G_io_apdu_buffer + 2, nv->sub_pk_seed, JARDIN_N);
+        memcpy(G_io_apdu_buffer + 2 + JARDIN_N, nv->sub_pk_root, JARDIN_N);
+        memcpy(G_io_apdu_buffer + 2 + 2 * JARDIN_N, nv->r, 32);
+        *tx = 2 + 2 * JARDIN_N + 32; /* 66 bytes */
         return APDU_RESPONSE_OK;
     }
 
@@ -111,13 +163,7 @@ uint16_t handleJardinKeygen(uint8_t p1, uint8_t p2,
 }
 
 /* ================================================================
- * INS 0x46: JARDÍN FORS+C Sign
- *
- * P1=0x00: sign — data = [q(1)][msg_hash(32)] → first sig chunk
- * P1=0x80: continue — returns next sig chunk
- *
- * The entire FORS+C sign fits in ~3 seconds (no chunking needed
- * for the computation — only for transmitting the ~2.5KB signature).
+ * INS 0x46: JARDÍN FORS+C Sign + auto-increment q
  * ================================================================ */
 
 uint16_t handleJardinSign(uint8_t p1, uint8_t p2,
@@ -126,7 +172,6 @@ uint16_t handleJardinSign(uint8_t p1, uint8_t p2,
     (void)p2; (void)flags;
 
     if (p1 == 0x80) {
-        /* Continue: return next sig chunk */
         if (!jardin_sig_pending) return APDU_RESPONSE_CONDITION_NOT_SATISFIED;
 
         uint16_t remaining = jardin_sig_len - jardin_sig_offset;
@@ -144,23 +189,43 @@ uint16_t handleJardinSign(uint8_t p1, uint8_t p2,
         return APDU_RESPONSE_OK;
     }
 
-    /* P1=0x00: sign */
+    /* P1=0x00: sign. Data = [q(1)][msg_hash(32)]
+     * If q=0: auto-use q from NVRAM */
     if (length < 33) return APDU_RESPONSE_WRONG_DATA_LENGTH;
     if (!jardin_key_ready) return APDU_RESPONSE_CONDITION_NOT_SATISFIED;
 
     uint8_t q = data[0];
     const uint8_t *msg_hash = data + 1;
 
-    if (q < 1 || q > JARDIN_Q_MAX) return APDU_RESPONSE_INVALID_DATA;
+    /* q=0 means "use next q from NVRAM" */
+    if (q == 0) {
+        q = jardin_nvram_get_q();
+        if (q == 0 || q > JARDIN_Q_MAX) return APDU_RESPONSE_CONDITION_NOT_SATISFIED;
+    }
 
-    /* Sign — fits in ~3 seconds, single computation */
+    if (q > JARDIN_Q_MAX) return APDU_RESPONSE_INVALID_DATA;
+
+    /* SAFETY: burn the index BEFORE signing to prevent reuse.
+     * If the device crashes mid-sign or the host disconnects,
+     * the leaf is consumed. We never sign the same index twice.
+     * FORS+C tolerates accidental double-sign at 105-bit security,
+     * but we prevent it at the hardware level. */
+    if (jardin_nvram_is_valid()) {
+        uint8_t stored_q = jardin_nvram_get_q();
+        if (q < stored_q) {
+            /* Client is trying to reuse a burned index — refuse */
+            return APDU_RESPONSE_CONDITION_NOT_SATISFIED;
+        }
+        /* Burn: advance NVRAM past this index BEFORE computing the signature */
+        jardin_nvram_set_q(q + 1);
+    }
+
     uint32_t sig_len = 0;
     if (!jardin_fors_sign(&jardin_sk, &jardin_keygen_state, msg_hash, q,
                            mem_buffer, &sig_len)) {
         return APDU_RESPONSE_INTERNAL_ERROR;
     }
 
-    /* Start chunked transmission */
     jardin_sig_len = sig_len;
     jardin_sig_offset = 0;
     jardin_sig_pending = true;
