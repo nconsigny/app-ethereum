@@ -219,10 +219,11 @@ def ledger_jardin_sign(dongle, q, msg_hash):
     resp = send(dongle, 0x46, p1=0x00, data=data, timeout=30)
 
     sig = bytes(resp)
-    while True:
+    # Collect remaining chunks until sig_pending is cleared
+    expected_min = 2452 + 1 * 16  # FORSC_BODY + q*N minimum
+    while len(sig) < expected_min:
         try:
             resp = send(dongle, 0x46, p1=0x80, timeout=5)
-            if len(resp) == 0: break
             sig += bytes(resp)
         except Exception:
             break
