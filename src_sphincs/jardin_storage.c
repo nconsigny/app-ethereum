@@ -1,5 +1,8 @@
 /**
  * JARDÍN NVRAM Storage — Ledger Nano S+ persistent storage
+ *
+ * Full signing state persistence (~1138 bytes).
+ * Field-by-field nvm_write to avoid large stack allocations.
  */
 
 #include "jardin_storage.h"
@@ -19,27 +22,35 @@ const jardin_nvram_t N_jardin_real;
 /* PIC-safe accessor */
 #define N_jardin (*(volatile jardin_nvram_t *)PIC(&N_jardin_real))
 
-void jardin_nvram_save(const uint8_t r[32],
-                       const uint8_t sub_pk_seed[JARDIN_N],
-                       const uint8_t sub_pk_root[JARDIN_N],
-                       uint8_t q) {
-    jardin_nvram_t tmp;
-    memcpy(tmp.r, r, 32);
-    memcpy(tmp.sub_pk_seed, sub_pk_seed, JARDIN_N);
-    memcpy(tmp.sub_pk_root, sub_pk_root, JARDIN_N);
-    tmp.q = q;
-    tmp.initialized = JARDIN_NVRAM_MAGIC;
+void jardin_nvram_save_full(const uint8_t r[32],
+                            const uint8_t sub_pk_seed[JARDIN_N],
+                            const uint8_t sub_pk_root[JARDIN_N],
+                            const uint8_t sk_seed[32],
+                            const uint8_t fors_pks[][JARDIN_N],
+                            const uint8_t spine[][JARDIN_N],
+                            const uint8_t sentinel[JARDIN_N],
+                            uint8_t q) {
+    /* Write each field individually to avoid ~1.1KB stack allocation.
+     * nvm_write can target any sub-region of the NVRAM struct. */
+    nvm_write((void *)PIC(&N_jardin_real.r), r, 32);
+    nvm_write((void *)PIC(&N_jardin_real.sub_pk_seed), sub_pk_seed, JARDIN_N);
+    nvm_write((void *)PIC(&N_jardin_real.sub_pk_root), sub_pk_root, JARDIN_N);
+    nvm_write((void *)PIC(&N_jardin_real.sk_seed), sk_seed, 32);
+    nvm_write((void *)PIC(&N_jardin_real.fors_pks), fors_pks, JARDIN_Q_MAX * JARDIN_N);
+    nvm_write((void *)PIC(&N_jardin_real.spine), spine, JARDIN_Q_MAX * JARDIN_N);
+    nvm_write((void *)PIC(&N_jardin_real.sentinel), sentinel, JARDIN_N);
+    nvm_write((void *)PIC(&N_jardin_real.q), &q, 1);
 
-    nvm_write((void *)PIC(&N_jardin_real), &tmp, sizeof(tmp));
-}
+    uint8_t qmax = JARDIN_Q_MAX;
+    nvm_write((void *)PIC(&N_jardin_real.q_max), &qmax, 1);
 
-void jardin_nvram_increment_q(void) {
-    uint8_t new_q = N_jardin.q + 1;
-    nvm_write((void *)PIC(&N_jardin_real.q), &new_q, sizeof(new_q));
+    uint8_t magic = JARDIN_NVRAM_MAGIC;
+    nvm_write((void *)PIC(&N_jardin_real.initialized), &magic, 1);
 }
 
 bool jardin_nvram_is_valid(void) {
-    return N_jardin.initialized == JARDIN_NVRAM_MAGIC;
+    return N_jardin.initialized == JARDIN_NVRAM_MAGIC
+        && N_jardin.q_max == JARDIN_Q_MAX;
 }
 
 uint8_t jardin_nvram_get_q(void) {
@@ -56,7 +67,7 @@ void jardin_nvram_set_q(uint8_t new_q) {
 }
 
 void jardin_nvram_clear(void) {
-    jardin_nvram_t tmp;
-    memset(&tmp, 0, sizeof(tmp));
-    nvm_write((void *)PIC(&N_jardin_real), &tmp, sizeof(tmp));
+    /* Just clear the magic byte — saves flash wear vs zeroing 1KB+ */
+    uint8_t zero = 0;
+    nvm_write((void *)PIC(&N_jardin_real.initialized), &zero, 1);
 }

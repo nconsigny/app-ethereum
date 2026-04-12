@@ -2,10 +2,11 @@
  * JARDÍN FORS+C Parameters — Variant 2
  *
  * k=26 FORS trees, a=5 (32 leaves per tree), n=128-bit
- * Unbalanced spine tree with D=Q_MAX=32 FORS+C instances per slot
+ * Unbalanced spine tree with D=Q_MAX=58 FORS+C instances per slot
  *
  * Sig at q=1: 2,468 bytes (FORS body 2,452 + 1 auth node)
- * Sig at q=32: 2,964 bytes (FORS body 2,452 + 32 auth nodes)
+ * Sig at q=58: 3,380 bytes (FORS body 2,452 + 58 auth nodes)
+ * Breakeven vs C11 (~287K gas) at roughly q=58
  */
 
 #pragma once
@@ -17,7 +18,7 @@
 #define JARDIN_A           5      /* tree height (leaves = 2^5 = 32) */
 #define JARDIN_N          16      /* hash output bytes */
 #define JARDIN_A_MASK   0x1F      /* 2^a - 1 */
-#define JARDIN_Q_MAX      32      /* max leaves per slot (D) */
+#define JARDIN_Q_MAX      58      /* max leaves per slot (D) */
 
 /* Derived */
 #define JARDIN_LEAVES_PER_TREE  (1u << JARDIN_A)  /* 32 */
@@ -31,7 +32,7 @@
 #define JARDIN_FORSC_BODY  (32 + 4 + (JARDIN_K - 1) * (JARDIN_N + JARDIN_A * JARDIN_N) + JARDIN_N)  /* 2452 */
 
 /* Max total sig size at q=Q_MAX */
-#define JARDIN_SIG_MAX     (JARDIN_FORSC_BODY + JARDIN_Q_MAX * JARDIN_N)  /* 2452 + 512 = 2964 */
+#define JARDIN_SIG_MAX     (JARDIN_FORSC_BODY + JARDIN_Q_MAX * JARDIN_N)  /* 2452 + 928 = 3380 */
 
 /* Address types */
 #define JARDIN_ADRS_FORS_TREE   3

@@ -27,11 +27,13 @@ extern uint8_t *sphincs_sig_buf;
 extern uint16_t sphincs_sig_offset;
 extern bool sphincs_sig_pending;
 extern bool sign_approved;
+extern bool jardin_sign_approved;
 
 /* Display buffers */
 static char pk_seed_hex[35];
 static char pk_root_hex[35];
 static char msg_hash_hex[67];
+static char q_str[12];
 static uint8_t pending_msg_hash[32];
 
 /* Progress spinner text buffer */
@@ -213,8 +215,57 @@ void ui_sphincs_confirm_sign(const uint8_t msg_hash[32]) {
     nbgl_useCaseReview(TYPE_TRANSACTION,
                        &pairsList,
                        get_app_icon(false),
-                       "Review SPHINCS+\nsignature",
+                       "Review SPHINCS-\nsignature",
                        NULL,
-                       "Sign with SPHINCS+?",
+                       "Sign with SPHINCS-?",
                        sign_review_cb);
+}
+
+/* ================================================================
+ * JARDÍN FORS+C Signing Confirmation
+ * ================================================================ */
+
+static void jardin_sign_review_cb(bool confirm) {
+    if (confirm) {
+        jardin_sign_approved = true;
+        io_seproxyhal_send_status(APDU_RESPONSE_OK, 0, false, false);
+    } else {
+        jardin_sign_approved = false;
+        io_seproxyhal_send_status(APDU_RESPONSE_CONDITION_NOT_SATISFIED, 0, true, false);
+        nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_REJECTED, ui_idle);
+    }
+}
+
+/* Called after JARDÍN signature chunks are fully sent to return to idle screen */
+void ui_jardin_sign_done(void) {
+    nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_SIGNED, ui_idle);
+}
+
+void ui_jardin_confirm_sign(const uint8_t msg_hash[32], uint8_t q) {
+    memcpy(pending_msg_hash, msg_hash, 32);
+
+    sphincs_to_hex(msg_hash, 32, msg_hash_hex);
+    uint_to_str((uint32_t)q, q_str);
+
+    static nbgl_contentTagValue_t pairs[2];
+    static nbgl_contentTagValueList_t pairsList;
+
+    pairs[0].item = "Message hash";
+    pairs[0].value = msg_hash_hex;
+    pairs[1].item = "FORS+C leaf (q)";
+    pairs[1].value = q_str;
+
+    pairsList.nbPairs = 2;
+    pairsList.pairs = pairs;
+    pairsList.smallCaseForValue = false;
+    pairsList.nbMaxLinesForValue = 0;
+    pairsList.wrapping = false;
+
+    nbgl_useCaseReview(TYPE_TRANSACTION,
+                       &pairsList,
+                       get_app_icon(false),
+                       "Review JARDIN\nsignature",
+                       NULL,
+                       "Sign with JARDIN?",
+                       jardin_sign_review_cb);
 }

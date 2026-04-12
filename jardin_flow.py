@@ -175,10 +175,10 @@ def ledger_jardin_keygen(dongle, r_bytes):
     print(f"  subPkSeed: {sub_seed.hex()}")
 
     t0 = time.time()
-    for i in range(32):
+    for i in range(58):
         resp = send(dongle, 0x44, p1=0x02, timeout=10)
         if resp[1]: break
-        if (i+1) % 8 == 0: print(f"  Step {i+1}/32 ({time.time()-t0:.0f}s)")
+        if (i+1) % 8 == 0: print(f"  Step {i+1}/58 ({time.time()-t0:.0f}s)")
 
     resp = send(dongle, 0x44, p1=0x03)
     sub_root = bytes(resp[16:32])
@@ -215,8 +215,10 @@ def ledger_jardin_sign(dongle, q, msg_hash):
     """JARDÍN FORS+C sign — single APDU (~3s)!"""
     print(f"\n=== JARDÍN Sign q={q} (~3s) ===")
     data = bytes([q]) + msg_hash
+    print(">>> APPROVE JARDÍN SIGN ON DEVICE <<<")
+    send(dongle, 0x46, p1=0x00, data=data, timeout=60)
     t0 = time.time()
-    resp = send(dongle, 0x46, p1=0x00, data=data, timeout=30)
+    resp = send(dongle, 0x46, p1=0x01, timeout=30)
 
     sig = bytes(resp)
     # Collect remaining chunks until sig_pending is cleared

@@ -1,11 +1,12 @@
 /**
  * JARDÍN NVRAM Storage — persists across power cycles on Nano S+
  *
- * Stores the sub-key slot state so the device remembers its
- * registration after power off. No .json file needed on the host.
+ * Stores the FULL signing state: slot identity + keygen state (spine,
+ * fors_pks, sentinel, sk_seed). After power cycle, a single APDU
+ * restores everything — no C11 keygen or JARDÍN rebuild needed.
  *
- * After Type 1 registration: r, sub_seed, sub_root, q are saved.
- * For each Type 2 sign: q is incremented and saved.
+ * After keygen finalize: full state saved (~1138 bytes).
+ * For each Type 2 sign: q is incremented.
  * After Q_MAX uses: clear and re-register a new slot.
  */
 
@@ -15,25 +16,39 @@
 #include <stdbool.h>
 #include "jardin_params.h"
 
-/* NVRAM-backed storage struct */
+/* NVRAM-backed storage struct (~1138 bytes) */
 typedef struct {
-    uint8_t  r[32];                /* slot random (device-bound) */
-    uint8_t  sub_pk_seed[JARDIN_N]; /* cached sub-key seed */
-    uint8_t  sub_pk_root[JARDIN_N]; /* cached sub-key root */
-    uint8_t  q;                    /* next leaf index (1-indexed, 0 = unused) */
-    uint8_t  initialized;          /* 0xA5 = valid data */
+    /* Slot identity (needed for on-chain slot lookup) */
+    uint8_t  r[32];                            /* slot random */
+    uint8_t  sub_pk_seed[JARDIN_N];            /* 16B sub-key seed */
+    uint8_t  sub_pk_root[JARDIN_N];            /* 16B sub-key root */
+
+    /* Signing secrets (needed to compute FORS secrets + deterministic R) */
+    uint8_t  sk_seed[32];                      /* 32B JARDÍN secret seed */
+
+    /* Keygen state (needed for unbalanced auth paths during signing) */
+    uint8_t  fors_pks[JARDIN_Q_MAX][JARDIN_N]; /* 32×16 = 512B */
+    uint8_t  spine[JARDIN_Q_MAX][JARDIN_N];    /* 32×16 = 512B */
+    uint8_t  sentinel[JARDIN_N];               /* 16B */
+
+    /* Counters + version */
+    uint8_t  q;                                /* next leaf index (1-indexed) */
+    uint8_t  q_max;                            /* Q_MAX used during keygen */
+    uint8_t  initialized;                      /* 0xA6 = valid data (v2 with q_max) */
 } jardin_nvram_t;
 
-#define JARDIN_NVRAM_MAGIC 0xA5
+#define JARDIN_NVRAM_MAGIC 0xA6  /* bumped from 0xA5 to invalidate old Q_MAX=32 data */
 
-/** Save JARDÍN slot state to NVRAM. Call after keygen finalize or after signing. */
-void jardin_nvram_save(const uint8_t r[32],
-                       const uint8_t sub_pk_seed[JARDIN_N],
-                       const uint8_t sub_pk_root[JARDIN_N],
-                       uint8_t q);
-
-/** Increment q in NVRAM. Call after each Type 2 sign. */
-void jardin_nvram_increment_q(void);
+/** Save full JARDÍN state to NVRAM. Call after keygen finalize.
+ *  Writes field-by-field to avoid 1KB+ stack allocation. */
+void jardin_nvram_save_full(const uint8_t r[32],
+                            const uint8_t sub_pk_seed[JARDIN_N],
+                            const uint8_t sub_pk_root[JARDIN_N],
+                            const uint8_t sk_seed[32],
+                            const uint8_t fors_pks[][JARDIN_N],
+                            const uint8_t spine[][JARDIN_N],
+                            const uint8_t sentinel[JARDIN_N],
+                            uint8_t q);
 
 /** Check if NVRAM has valid JARDÍN state. */
 bool jardin_nvram_is_valid(void);

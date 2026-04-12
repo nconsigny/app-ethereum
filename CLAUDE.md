@@ -25,7 +25,7 @@ python3 -m ledgerblue.loadApp \
   --appName "EthSPHINCS" \
   --appFlags 0x800 \
   --tlv \
-  --dataSize 512 \
+  --dataSize 2048 \
   --installparamsSize 92 \
   --path "44'/60'" \
   --curve secp256k1
@@ -33,7 +33,7 @@ python3 -m ledgerblue.loadApp \
 
 **Critical flags**:
 - `--targetVersion=""` — without this you get `680f` (invalid signature) at commit step
-- `--dataSize 512` — computed from linker map `_envram_data - _nvram_data`; 0 causes `5101` (not enough memory)
+- `--dataSize 2048` — NVRAM holds full signing state (~1138 bytes); 0 causes `5101` (not enough memory)
 - `--installparamsSize 92` — from linker map `_einstall_parameters - _install_parameters`
 - `--appFlags 0x800` — library flag matching upstream Ethereum app
 
@@ -64,7 +64,8 @@ Bump `APPVERSION_N` in `Makefile` (line 39) before each sideload to verify the n
 | 0x44 | 0x03 | JARDÍN keygen finalize → subPkRoot | instant |
 | 0x44 | 0x04 | JARDÍN load from NVRAM | instant |
 | 0x44 | 0x05 | JARDÍN get state | instant |
-| 0x46 | 0x00 | JARDÍN sign (q + hash) → first chunk | **~3s** |
+| 0x46 | 0x00 | JARDÍN sign init (q + hash, shows confirm) | async |
+| 0x46 | 0x01 | JARDÍN sign execute (after approval) → first chunk | **~3s** |
 | 0x46 | 0x80 | JARDÍN sign chunk (250B) | instant |
 
 ## Nano S+ Constraints Learned the Hard Way
@@ -93,7 +94,8 @@ Bump `APPVERSION_N` in `Makefile` (line 39) before each sideload to verify the n
 - Access via `PIC()` macro: `(*(volatile jardin_nvram_t *)PIC(&N_jardin_real))`
 - Write via `nvm_write()` only
 - Survives power cycles, app close/reopen
-- Used for JARDÍN slot state: `r`, `sub_seed`, `sub_root`, `q`
+- Stores FULL signing state: `r`, `sk_seed`, `sub_seed`, `sub_root`, `q`, `fors_pks[32]`, `spine[32]`, `sentinel` (~1138 bytes)
+- **CRITICAL: `--dataSize 2048` must never change between sideloads.** Changing it wipes NVRAM, which destroys the q counter. If NVRAM is lost, the old r is dead — generate a fresh r and re-register (Type 1). Never reuse an r without a verified q.
 
 ### Treehash merge condition bug (fixed)
 - Original: `while (level < stack_top && (idx & 1) == 1)` — WRONG
@@ -138,14 +140,9 @@ When a signature fails on-chain:
 | EntryPoint v0.9 | `0x433709009B8330FDa32311DF1C2AFA402eD8D009` |
 | JardinAccount (test) | `0xaafB0cE1a33a6161822827592b2D94666c474022` |
 
-## Current Bug (Type 2 UserOp)
+## Milestones
 
-JARDÍN FORS+C signature verifies when called directly against the verifier (`verify_jardin.py`), but fails when submitted as a Type 2 UserOp through JardinAccount. Gas used at revert: ~158K (past ECDSA check, likely fails at FORS verification step).
-
-Possible causes:
-- H_msg format mismatch: JARDÍN uses 192-byte hash (seed||root||R||msg||**counter**||domain) — the counter field may be encoded differently between C code and Solidity verifier
-- `bytes16` → `bytes32` casting: Solidity right-pads bytes16, C left-pads with zeros — should be same but verify
-- The `subPkRoot` passed to verifier may not match what JARDÍN keygen produced if `sphincs_set_seed` wasn't called
+- **v1.28.0**: Type 2 UserOp verified on Sepolia (TX `0xac505d32...1b9c8a`). 3.2s FORS+C sign, 193K gas. Fixed `sphincs_set_seed` cache corruption bug.
 
 ## Key Derivation (must match between C, Python, and Solidity)
 

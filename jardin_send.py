@@ -26,6 +26,9 @@ STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".jardin_s
 def keccak(data):
     h = _k.new(digest_bits=256); h.update(data); return h.digest()
 
+def send(dongle, ins, p1=0, p2=0, data=b"", timeout=120):
+    return dongle.exchange(bytes([CLA, ins, p1, p2, len(data)]) + data, timeout=timeout*1000)
+
 def load_env():
     env = {}
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "SPHINCs-", "SPHINCs-", ".env")
@@ -126,12 +129,30 @@ def main():
     print("Connecting to Ledger...")
     dongle = getDongle(True)
 
+    # Restore signing state from NVRAM (instant, needed after power cycle)
+    try:
+        send(dongle, 0x44, p1=0x04)
+        print("NVRAM restore OK")
+    except:
+        print("ERROR: NVRAM restore failed — run jardin_quick.py first")
+        dongle.close()
+        sys.exit(1)
+
+    # Version check (settles HID transport state after NVRAM restore)
+    resp = send(dongle, 0x06)
+    print(f"Version: {resp[1]}.{resp[2]}.{resp[3]}")
+
+    # P1=0x00: show confirmation on device (async — waits for user approval)
+    print(">>> APPROVE JARDÍN SIGN ON DEVICE <<<")
+    send(dongle, 0x46, p1=0x00, data=bytes([q])+op_hash, timeout=120)
+
+    # P1=0x01: execute sign after approval (~3s)
     t0 = time.time()
-    resp = dongle.exchange(bytes([CLA, 0x46, 0x00, 0x00, 33, q]) + op_hash, timeout=30000)
+    resp = send(dongle, 0x46, p1=0x01, timeout=30)
     sig = bytes(resp)
     while len(sig) < 2452 + q * 16:
         try:
-            resp = dongle.exchange(bytes([CLA, 0x46, 0x80, 0x00, 0x00]), timeout=5000)
+            resp = send(dongle, 0x46, p1=0x80, timeout=5)
             sig += bytes(resp)
         except: break
     elapsed = time.time() - t0

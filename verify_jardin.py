@@ -40,10 +40,10 @@ print(f"  C11 pk_root: {bytes(resp[16:32]).hex()}")
 print("\n--- JARDÍN Keygen ---")
 r_bytes = bytes(32)  # use zero r for deterministic test
 send(dongle, 0x44, p1=0x00, data=r_bytes)
-for i in range(32):
+for i in range(58):
     resp = send(dongle, 0x44, p1=0x02, timeout=10)
     if resp[1]: break
-    if (i+1) % 8 == 0: print(f"  {i+1}/32")
+    if (i+1) % 8 == 0: print(f"  {i+1}/58")
 resp = send(dongle, 0x44, p1=0x03)
 sub_seed = bytes(resp[:16])
 sub_root = bytes(resp[16:32])
@@ -54,8 +54,10 @@ print(f"  subPkRoot: {sub_root.hex()}")
 test_hash = bytes.fromhex("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
 print(f"\n--- JARDÍN Sign q=1 ---")
 data = bytes([1]) + test_hash
+print(">>> APPROVE JARDÍN SIGN ON DEVICE <<<")
+send(dongle, 0x46, p1=0x00, data=data, timeout=60)
 t0 = time.time()
-resp = send(dongle, 0x46, p1=0x00, data=data, timeout=30)
+resp = send(dongle, 0x46, p1=0x01, timeout=30)
 sig = bytes(resp)
 while True:
     try:

@@ -109,10 +109,10 @@ def main():
     r_bytes = b'\x01' * 32  # deterministic r for testing
     send(dongle, 0x44, p1=0x00, data=r_bytes)
     t0 = time.time()
-    for i in range(32):
+    for i in range(58):
         resp = send(dongle, 0x44, p1=0x02, timeout=10)
         if resp[1]: break
-        if (i+1)%8==0: print(f"  {i+1}/32 ({time.time()-t0:.0f}s)")
+        if (i+1)%8==0: print(f"  {i+1}/58 ({time.time()-t0:.0f}s)")
     resp = send(dongle, 0x44, p1=0x03)
     sub_seed = bytes(resp[:16]); sub_root = bytes(resp[16:32])
     print(f"  subPkSeed: {sub_seed.hex()}")
@@ -192,9 +192,11 @@ def main():
     signed2 = acct.unsafe_sign_hash(op_hash2)
     ecdsa2 = signed2.r.to_bytes(32,"big")+signed2.s.to_bytes(32,"big")+signed2.v.to_bytes(1,"big")
 
-    # JARDÍN sign — 3 SECONDS!
+    # JARDÍN sign — confirm + 3 SECONDS!
+    print("  >>> APPROVE JARDÍN SIGN ON DEVICE <<<")
+    send(dongle, 0x46, p1=0x00, data=bytes([1])+op_hash2, timeout=60)
     t0 = time.time()
-    resp = send(dongle, 0x46, p1=0x00, data=bytes([1])+op_hash2, timeout=30)
+    resp = send(dongle, 0x46, p1=0x01, timeout=30)
     jardin_sig = bytes(resp)
     while len(jardin_sig) < 2452 + 16:
         try:
