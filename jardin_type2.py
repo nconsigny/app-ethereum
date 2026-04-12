@@ -164,6 +164,20 @@ def main():
     print("  Submitting...")
     submit(rpc, privkey, op)
 
+    # Save state for jardin_send.py (Type 2 reuse without C11)
+    import json
+    state = {
+        "account": ACCOUNT,
+        "h_r": h_r.hex(),
+        "sub_seed": sub_seed.hex(),
+        "sub_root": sub_root.hex(),
+        "q": 1
+    }
+    state_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".jardin_state.json")
+    with open(state_file, "w") as f:
+        json.dump(state, f, indent=2)
+    print(f"  State saved to {state_file}")
+
     # Type 2: JARDÍN compact sign!
     print("\n--- Type 2: JARDÍN FORS+C Compact ---")
     nonce2 = get_nonce(rpc)
