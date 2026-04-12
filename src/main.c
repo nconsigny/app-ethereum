@@ -46,6 +46,7 @@
 #include "commands_7702.h"
 #include "sign_message.h"
 #include "sphincs_apdu.h"
+#include "jardin_apdu.h"
 
 tmpCtx_t tmpCtx;
 txContext_t txContext;
@@ -259,6 +260,14 @@ static uint16_t handleApdu(command_t *cmd, uint32_t *flags, uint32_t *tx) {
 
         case INS_SPHINCS_SIGN:
             sw = handleSphincsSign(cmd->p1, cmd->p2, cmd->data, cmd->lc, flags, tx);
+            break;
+
+        case INS_JARDIN_KEYGEN:
+            sw = handleJardinKeygen(cmd->p1, cmd->p2, cmd->data, cmd->lc, flags, tx);
+            break;
+
+        case INS_JARDIN_SIGN:
+            sw = handleJardinSign(cmd->p1, cmd->p2, cmd->data, cmd->lc, flags, tx);
             break;
 
         default:
