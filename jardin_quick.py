@@ -176,6 +176,11 @@ def main():
         print(f"  Instant restore OK! q={q}")
         print(f"  subPkSeed: {sub_seed.hex()}")
         print(f"  subPkRoot: {sub_root.hex()}")
+
+        if q > 58:
+            print(f"  Slot exhausted (q={q} > Q_MAX=58) — registering fresh slot")
+            sub_seed, sub_root, h_r = do_fresh_slot(dongle, rpc, privkey)
+            q = 1
     except Exception as e:
         print(f"  NVRAM empty ({e})")
         print("  Old r is dead — generating fresh slot (requires Type 1 registration)")

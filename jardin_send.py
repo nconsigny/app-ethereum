@@ -192,6 +192,11 @@ def main():
     resp = send(dongle, 0x06)
     print(f"Version: {resp[1]}.{resp[2]}.{resp[3]}")
 
+    if q > 58:
+        print(f"Slot exhausted (q={q} > Q_MAX=58). Run jardin_quick.py to register a fresh slot.")
+        dongle.close()
+        sys.exit(1)
+
     recipient = args.to or acct.address
     value_wei = int(float(args.value) * 1e18)
 
