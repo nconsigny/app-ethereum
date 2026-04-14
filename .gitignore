@@ -17,6 +17,12 @@ venv/
 __version__.py
 
 .vscode
+
+# writeup
+writeUp.md
+writeUplast.md
+writeUp37.md
+
 .idea
 
 # Fuzzing
@@ -31,3 +37,6 @@ report.html
 
 # LSP
 .cache/
+
+ ===
+
