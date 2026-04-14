@@ -80,9 +80,9 @@ static void jardin_compute_sentinel(const uint8_t seed[JARDIN_N],
     memset(buf + JARDIN_N, 0, 32 - JARDIN_N);
     memcpy(buf + 32, sk_seed, 32);
     memcpy(buf + 64, "jardin_sentinel", 15);
-    buf[79] = 0; /* null terminator of string doesn't matter, use 80 bytes */
-
-    sphincs_keccak256(buf, 79, hash); /* "jardin_sentinel" is 15 chars, total = 32+32+15 = 79 */
+    /* "jardin_sentinel" is 15 chars, total = 32+32+15 = 79 bytes.
+     * Matches Python: keccak256(to_b32(seed) + to_b32(sk_seed) + b"jardin_sentinel") */
+    sphincs_keccak256(buf, 79, hash);
     memcpy(out, hash, JARDIN_N);
 }
 
@@ -293,7 +293,7 @@ bool jardin_fors_sign(const jardin_secret_key_t *sk,
         int base_byte = 31 - (JARDIN_FORCED_SHIFT / 8);
         int base_bit = JARDIN_FORCED_SHIFT % 8;
         uint32_t val = 0;
-        for (int b = 0; b < 2; b++) {
+        for (int b = 0; b < 3; b++) {  /* 3 bytes for robustness with any a ≤ 16 */
             int idx = base_byte - b;
             if (idx >= 0 && idx < 32) val |= ((uint32_t)digest[idx]) << (b * 8);
         }

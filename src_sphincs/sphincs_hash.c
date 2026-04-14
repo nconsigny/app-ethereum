@@ -92,8 +92,17 @@ static void pad_n_to_32(uint8_t out[32], const uint8_t in[SPHINCS_N]) {
 static uint8_t g_seed_padded[32];
 static bool g_seed_set = false;
 
+/* Precomputed keccak state with seed absorbed — clone-and-continue pattern
+ * from the SPHINCS+ reference implementation (hash_sha2.c:seed_state).
+ * Saves re-absorbing the 32-byte seed on every th_multi call. */
+static cx_sha3_t g_seeded_ctx;
+
 void sphincs_set_seed(const uint8_t seed[SPHINCS_N]) {
     pad_n_to_32(g_seed_padded, seed);
+    pad_n_to_32(g_th_buf, seed);  /* pre-fill hash buffer for th/th_pair */
+    /* Precompute keccak state after absorbing seed */
+    cx_keccak_init_no_throw(&g_seeded_ctx, 256);
+    cx_hash_no_throw((cx_hash_t *)&g_seeded_ctx, 0, g_seed_padded, 32, NULL, 0);
     g_seed_set = true;
 }
 
@@ -106,9 +115,9 @@ void sphincs_th(const uint8_t seed[SPHINCS_N],
                 const uint8_t adrs[32],
                 const uint8_t input[SPHINCS_N],
                 uint8_t out[SPHINCS_N]) {
-    if (g_seed_set) {
-        memcpy(g_th_buf, g_seed_padded, 32);
-    } else {
+    /* g_th_buf[0..31] is pre-filled by sphincs_set_seed() and preserved
+     * across th/th_pair calls. Only recompute if seed was never set. */
+    if (!g_seed_set) {
         pad_n_to_32(g_th_buf, seed);
     }
     memcpy(g_th_buf + 32, adrs, 32);
@@ -124,9 +133,8 @@ void sphincs_th_pair(const uint8_t seed[SPHINCS_N],
                      const uint8_t left[SPHINCS_N],
                      const uint8_t right[SPHINCS_N],
                      uint8_t out[SPHINCS_N]) {
-    if (g_seed_set) {
-        memcpy(g_th_buf, g_seed_padded, 32);
-    } else {
+    /* g_th_buf[0..31] is pre-filled by sphincs_set_seed(). */
+    if (!g_seed_set) {
         pad_n_to_32(g_th_buf, seed);
     }
     memcpy(g_th_buf + 32, adrs, 32);
@@ -148,10 +156,15 @@ void sphincs_th_multi(const uint8_t seed[SPHINCS_N],
     uint8_t hash[32];
     uint8_t word[32];
 
-    cx_keccak_init_no_throw(&g_sha3, 256);
-
-    pad_n_to_32(word, seed);
-    cx_hash_no_throw((cx_hash_t *)&g_sha3, 0, word, 32, NULL, 0);
+    /* Clone precomputed seeded keccak context if available (reference
+     * implementation pattern: hash_sha2.c:seed_state). */
+    if (g_seed_set) {
+        memcpy(&g_sha3, &g_seeded_ctx, sizeof(cx_sha3_t));
+    } else {
+        cx_keccak_init_no_throw(&g_sha3, 256);
+        pad_n_to_32(word, seed);
+        cx_hash_no_throw((cx_hash_t *)&g_sha3, 0, word, 32, NULL, 0);
+    }
     cx_hash_no_throw((cx_hash_t *)&g_sha3, 0, adrs, 32, NULL, 0);
 
     for (size_t i = 0; i < count; i++) {

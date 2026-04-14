@@ -196,6 +196,11 @@ static void extract_digits(const uint8_t digest[32], uint8_t digits[SPHINCS_L]) 
     }
 }
 
+/* Minimum grinding iterations to reduce timing side-channel.
+ * After finding a valid count, continue hashing up to this floor
+ * so most signings have uniform grinding duration. */
+#define WOTS_GRIND_MIN_ITERS 16384
+
 /* Grind counter until digit sum equals target */
 static bool wots_find_count(const uint8_t seed[SPHINCS_N],
                             uint32_t layer, uint64_t tree, uint32_t kp,
@@ -203,6 +208,7 @@ static bool wots_find_count(const uint8_t seed[SPHINCS_N],
                             uint32_t *count_out,
                             uint8_t digest_out[32],
                             uint8_t digits_out[SPHINCS_L]) {
+    bool found = false;
     for (uint32_t count = 0; count < 10000000; count++) {
         uint8_t digest[32];
         uint8_t digits[SPHINCS_L];
@@ -214,124 +220,129 @@ static bool wots_find_count(const uint8_t seed[SPHINCS_N],
         uint32_t sum = 0;
         for (int i = 0; i < SPHINCS_L; i++) sum += digits[i];
 
-        if (sum == SPHINCS_SWN) {
+        if (!found && sum == SPHINCS_SWN) {
             *count_out = count;
             memcpy(digest_out, digest, 32);
             memcpy(digits_out, digits, SPHINCS_L);
-            return true;
+            found = true;
         }
+        /* Pad to minimum iterations to reduce timing side-channel */
+        if (found && count >= WOTS_GRIND_MIN_ITERS) break;
     }
-    return false;
+    return found;
 }
 
 /* ================================================================
  * Merkle tree operations
  * ================================================================ */
 
-/* Build FORS tree and return root + auth path for a given leaf index.
- * This builds the full tree in-place (2^a leaves). */
+/* Shared FORS treehash stack — static to save stack space, never used concurrently */
+static uint8_t g_fors_stack[SPHINCS_A + 1][SPHINCS_N];
+
+/* Build FORS tree: single-pass treehash with inline auth path collection.
+ *
+ * Replaces the previous level-by-level sibling recomputation approach with
+ * the reference implementation's treehashx1 pattern (utils.c/utilsx1.c).
+ * Same computational cost but cleaner code and consistent with
+ * build_subtree_sign() used for the hypertree layers. */
 static void build_fors_tree_auth(const uint8_t seed[SPHINCS_N],
                                  const uint8_t sk_seed[32],
                                  uint32_t tree_idx,
                                  uint32_t leaf_idx,
                                  uint8_t root[SPHINCS_N],
                                  uint8_t auth_path[SPHINCS_A][SPHINCS_N]) {
-    /* Build leaves */
     const uint32_t n_leaves = 1u << SPHINCS_A; /* 2048 */
-    /* We can't allocate 2048*16 = 32KB on stack on Ledger.
-     * Use a level-by-level approach with two buffers. */
-    uint8_t level_a[SPHINCS_N]; /* current node being tracked */
-    uint8_t sibling[SPHINCS_N];
     uint8_t adrs[32];
+    uint8_t keep[SPHINCS_A][SPHINCS_N]; /* auth path siblings */
+    uint32_t stack_top = 0;
 
-    /* Compute the leaf at leaf_idx */
-    uint8_t secret[SPHINCS_N];
-    fors_secret(sk_seed, tree_idx, leaf_idx, secret);
-    sphincs_make_adrs(adrs, 0, 0, ADRS_FORS_TREE, tree_idx, 0, 0, leaf_idx);
-    sphincs_th(seed, adrs, secret, level_a);
+    for (uint32_t i = 0; i < n_leaves; i++) {
+        /* Compute leaf i */
+        uint8_t secret[SPHINCS_N];
+        fors_secret(sk_seed, tree_idx, i, secret);
+        sphincs_make_adrs(adrs, 0, 0, ADRS_FORS_TREE, tree_idx, 0, 0, i);
+        uint8_t node[SPHINCS_N];
+        sphincs_th(seed, adrs, secret, node);
+        heartbeat();
 
-    /* For each level h=0..a-1, we need sibling at auth_path[h].
-     * This requires recomputing the sibling subtree at each level.
-     * On constrained devices, this is the only feasible approach. */
-    uint32_t idx = leaf_idx;
-    for (uint32_t h = 0; h < SPHINCS_A; h++) {
-        uint32_t sibling_idx = idx ^ 1;
-        uint32_t parent_idx = idx >> 1;
+        uint32_t idx = i;
+        uint32_t level = 0;
 
-        /* Compute sibling node by building the subtree rooted at sibling */
-        /* For a single sibling leaf (at level 0), compute from scratch */
-        /* For higher levels, we need the subtree root — simplified: compute just the leaf chain */
-        if (h == 0) {
-            /* Sibling is a single leaf */
-            uint8_t sib_secret[SPHINCS_N];
-            fors_secret(sk_seed, tree_idx, sibling_idx, sib_secret);
-            sphincs_make_adrs(adrs, 0, 0, ADRS_FORS_TREE, tree_idx, 0, 0, sibling_idx);
-            sphincs_th(seed, adrs, sib_secret, sibling);
-        } else {
-            /* Sibling is a subtree root of height h.
-             * Build it by computing all 2^h leaves under sibling_idx and merging. */
-            uint32_t sub_start = sibling_idx << h;
-            uint32_t sub_size = 1u << h;
-
-            /* Compute first leaf of the subtree */
-            uint8_t node[SPHINCS_N];
-            {
-                uint8_t s[SPHINCS_N];
-                fors_secret(sk_seed, tree_idx, sub_start, s);
-                sphincs_make_adrs(adrs, 0, 0, ADRS_FORS_TREE, tree_idx, 0, 0, sub_start);
-                sphincs_th(seed, adrs, s, node);
-            }
-
-            /* Process remaining leaves, merging pairs bottom-up */
-            /* Static to save 176 bytes of call stack (Nano S+ ~1.5KB stack) */
-            static uint8_t fors_th_stack[SPHINCS_A][SPHINCS_N];
-            uint8_t (*stack)[SPHINCS_N] = fors_th_stack;
-            uint32_t stack_top = 0;
-            /* Push first leaf */
-            memcpy(stack[0], node, SPHINCS_N);
-            stack_top = 1;
-
-            for (uint32_t j = 1; j < sub_size; j++) {
-                uint32_t leaf_j = sub_start + j;
-                uint8_t s[SPHINCS_N];
-                fors_secret(sk_seed, tree_idx, leaf_j, s);
-                sphincs_make_adrs(adrs, 0, 0, ADRS_FORS_TREE, tree_idx, 0, 0, leaf_j);
-                sphincs_th(seed, adrs, s, node);
-                heartbeat();
-
-                /* Merge with stack while the current tree position allows */
-                uint32_t tree_idx_j = leaf_j;
-                uint32_t level = 0;
-                while ((tree_idx_j & 1) == 1 && stack_top > 0) {
-                    uint32_t pi = tree_idx_j >> 1;
-                    sphincs_make_adrs(adrs, 0, 0, ADRS_FORS_TREE, tree_idx, 0, level + 1, pi);
-                    sphincs_th_pair(seed, adrs, stack[stack_top - 1], node, node);
-                    stack_top--;
-                    tree_idx_j >>= 1;
-                    level++;
-                }
-                memcpy(stack[stack_top], node, SPHINCS_N);
-                stack_top++;
-            }
-
-            /* Stack should have exactly one element: the subtree root */
-            memcpy(sibling, stack[0], SPHINCS_N);
+        /* Check if this leaf is auth sibling at level 0 */
+        if (i == ((leaf_idx >> 0) ^ 1)) {
+            memcpy(keep[0], node, SPHINCS_N);
         }
 
-        memcpy(auth_path[h], sibling, SPHINCS_N);
+        /* Merge pairs bottom-up, collecting auth siblings */
+        while ((idx & 1) == 1 && stack_top > 0) {
+            uint32_t left_idx = idx ^ 1;
+            if (left_idx == ((leaf_idx >> level) ^ 1)) {
+                memcpy(keep[level], g_fors_stack[stack_top - 1], SPHINCS_N);
+            }
+            if (idx == ((leaf_idx >> level) ^ 1)) {
+                memcpy(keep[level], node, SPHINCS_N);
+            }
 
-        /* Compute parent: merge level_a with sibling */
-        sphincs_make_adrs(adrs, 0, 0, ADRS_FORS_TREE, tree_idx, 0, h + 1, parent_idx);
-        if (idx & 1) {
-            sphincs_th_pair(seed, adrs, sibling, level_a, level_a);
-        } else {
-            sphincs_th_pair(seed, adrs, level_a, sibling, level_a);
+            uint32_t pi = idx >> 1;
+            sphincs_make_adrs(adrs, 0, 0, ADRS_FORS_TREE, tree_idx, 0, level + 1, pi);
+            sphincs_th_pair(seed, adrs, g_fors_stack[stack_top - 1], node, node);
+            stack_top--;
+            idx >>= 1;
+            level++;
+
+            /* After merge: check if merged node is auth sibling at new level */
+            if (idx == ((leaf_idx >> level) ^ 1)) {
+                memcpy(keep[level], node, SPHINCS_N);
+            }
         }
 
-        idx = parent_idx;
+        /* Before push: check if node is auth sibling at current level */
+        if (idx == ((leaf_idx >> level) ^ 1)) {
+            memcpy(keep[level], node, SPHINCS_N);
+        }
+
+        memcpy(g_fors_stack[stack_top], node, SPHINCS_N);
+        stack_top++;
     }
 
-    memcpy(root, level_a, SPHINCS_N);
+    memcpy(root, g_fors_stack[0], SPHINCS_N);
+    memcpy(auth_path, keep, SPHINCS_A * SPHINCS_N);
+}
+
+/* Build FORS tree root only (no auth path needed).
+ * Used for the forced-zero tree where leaf_idx is always 0 and
+ * only the root is needed. Avoids wasting time collecting auth. */
+static void build_fors_tree_root(const uint8_t seed[SPHINCS_N],
+                                 const uint8_t sk_seed[32],
+                                 uint32_t tree_idx,
+                                 uint8_t root[SPHINCS_N]) {
+    const uint32_t n_leaves = 1u << SPHINCS_A;
+    uint8_t adrs[32];
+    uint32_t stack_top = 0;
+
+    for (uint32_t i = 0; i < n_leaves; i++) {
+        uint8_t secret[SPHINCS_N];
+        fors_secret(sk_seed, tree_idx, i, secret);
+        sphincs_make_adrs(adrs, 0, 0, ADRS_FORS_TREE, tree_idx, 0, 0, i);
+        uint8_t node[SPHINCS_N];
+        sphincs_th(seed, adrs, secret, node);
+        heartbeat();
+
+        uint32_t idx = i;
+        uint32_t level = 0;
+        while ((idx & 1) == 1 && stack_top > 0) {
+            uint32_t pi = idx >> 1;
+            sphincs_make_adrs(adrs, 0, 0, ADRS_FORS_TREE, tree_idx, 0, level + 1, pi);
+            sphincs_th_pair(seed, adrs, g_fors_stack[stack_top - 1], node, node);
+            stack_top--;
+            idx >>= 1;
+            level++;
+        }
+        memcpy(g_fors_stack[stack_top], node, SPHINCS_N);
+        stack_top++;
+    }
+
+    memcpy(root, g_fors_stack[0], SPHINCS_N);
 }
 
 /* ================================================================
@@ -479,6 +490,10 @@ static void build_subtree_sign(const uint8_t seed[SPHINCS_N],
  * R grinding (FORS+C)
  * ================================================================ */
 
+/* Minimum R grinding iterations to reduce timing side-channel.
+ * Expected: ~2^SPHINCS_A = 2048 iterations. Pad to ~4× expected. */
+#define GRIND_R_MIN_ITERS 8192
+
 static bool grind_R(const uint8_t seed[SPHINCS_N],
                     const uint8_t root[SPHINCS_N],
                     const uint8_t message[32],
@@ -487,6 +502,7 @@ static bool grind_R(const uint8_t seed[SPHINCS_N],
     uint8_t nonce_buf[7 + 32]; /* "R_grind" + nonce(32) */
     memcpy(nonce_buf, "R_grind", 7);
 
+    bool found = false;
     for (uint32_t nonce = 0; nonce < 10000000; nonce++) {
         /* R = keccak256("R_grind" || nonce) & N_MASK */
         memset(nonce_buf + 7, 0, 28);
@@ -497,35 +513,20 @@ static bool grind_R(const uint8_t seed[SPHINCS_N],
 
         uint8_t R_hash[32];
         sphincs_keccak256(nonce_buf, 39, R_hash);
-        memcpy(R_out, R_hash, SPHINCS_N);
 
         /* digest = H_msg(seed, root, R, message) */
         uint8_t digest[32];
-        sphincs_h_msg(seed, root, R_out, message, digest);
+        sphincs_h_msg(seed, root, R_hash, message, digest);
         heartbeat();
 
-        /* Check forced-zero: last FORS index (bits 132..142) must be 0 */
-        /* Extract bits 132..142 from big-endian digest */
-        /* bit 132 is in byte (255-132)/8 = byte 15 from MSB, i.e. digest[15] area */
-        /* Actually, the digest is big-endian from keccak.
-         * In the Solidity contract: shr(132, dVal) & 0x7FF
-         * This means bit 132 counting from LSB of a 256-bit number.
-         * In big-endian bytes: bit 132 from LSB = bit (255-132)=123 from MSB
-         * byte index = 123/8 = 15, bit within byte = 123%8 = 3
-         * We need 11 bits starting at bit 132 from LSB.
-         */
-        /* Simpler: treat digest as uint256 big-endian.
-         * bits 132..142 from LSB = shift right by 132, mask 0x7FF */
+        /* Check forced-zero: last FORS index must be 0.
+         * Treat digest as uint256 big-endian:
+         * bits FORCED_SHIFT..FORCED_SHIFT+A-1 from LSB = shr(132, dVal) & 0x7FF */
         uint32_t forced = 0;
         {
-            /* Extract bits 132-142: byte positions 14-15 (from MSB perspective) */
-            /* bit 132 from LSB in a 32-byte big-endian array:
-             * byte_idx = 31 - 132/8 = 31 - 16 = 15
-             * bit_in_byte = 132 % 8 = 4 */
-            int base_byte = 31 - (SPHINCS_FORCED_SHIFT / 8); /* 31 - 16 = 15 */
-            int base_bit = SPHINCS_FORCED_SHIFT % 8;          /* 4 */
+            int base_byte = 31 - (SPHINCS_FORCED_SHIFT / 8);
+            int base_bit = SPHINCS_FORCED_SHIFT % 8;
             uint32_t val = 0;
-            /* Read 3 bytes to cover 11 bits starting at bit offset */
             for (int b = 0; b < 3; b++) {
                 int idx = base_byte - b;
                 if (idx >= 0 && idx < 32) {
@@ -535,12 +536,15 @@ static bool grind_R(const uint8_t seed[SPHINCS_N],
             forced = (val >> base_bit) & SPHINCS_A_MASK;
         }
 
-        if (forced == 0) {
+        if (!found && forced == 0) {
+            memcpy(R_out, R_hash, SPHINCS_N);
             memcpy(digest_out, digest, 32);
-            return true;
+            found = true;
         }
+        /* Pad to minimum iterations to reduce timing side-channel */
+        if (found && nonce >= GRIND_R_MIN_ITERS) break;
     }
-    return false;
+    return found;
 }
 
 /* ================================================================
@@ -702,14 +706,10 @@ bool sphincs_sign(const sphincs_secret_key_t *sk,
         sig_off += SPHINCS_N;
     }
 
-    /* Last tree (forced-zero): write tree root as "secret" */
+    /* Last tree (forced-zero): root-only computation, no auth path needed */
     {
-        uint8_t adrs[32];
-        /* Build the full tree to get root */
-        /* Since index is forced to 0, we store the tree root directly */
         uint8_t root_last[SPHINCS_N];
-        uint8_t dummy_auth[SPHINCS_A][SPHINCS_N];
-        build_fors_tree_auth(sk->pk_seed, sk->sk_seed, SPHINCS_K - 1, 0, root_last, dummy_auth);
+        build_fors_tree_root(sk->pk_seed, sk->sk_seed, SPHINCS_K - 1, root_last);
         memcpy(sig + sig_off, root_last, SPHINCS_N);
         sig_off += SPHINCS_N;
     }
@@ -900,10 +900,9 @@ sphincs_sign_phase_t sphincs_sign_step(sphincs_sign_state_t *st,
         }
 
         if (t == SPHINCS_K - 1) {
-            /* Forced-zero tree: build it and write root as "secret" (~3s) */
+            /* Forced-zero tree: root-only computation, no auth path needed (~3s) */
             uint8_t root_last[SPHINCS_N];
-            uint8_t dummy_auth[SPHINCS_A][SPHINCS_N];
-            build_fors_tree_auth(sk->pk_seed, sk->sk_seed, SPHINCS_K - 1, 0, root_last, dummy_auth);
+            build_fors_tree_root(sk->pk_seed, sk->sk_seed, SPHINCS_K - 1, root_last);
             /* Write root_last into the secret slot we reserved */
             memcpy(sig + SPHINCS_N + (SPHINCS_K - 1) * SPHINCS_N, root_last, SPHINCS_N);
 
