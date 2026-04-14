@@ -196,10 +196,9 @@ static void extract_digits(const uint8_t digest[32], uint8_t digits[SPHINCS_L]) 
     }
 }
 
-/* Minimum grinding iterations to reduce timing side-channel.
- * After finding a valid count, continue hashing up to this floor
- * so most signings have uniform grinding duration. */
-#define WOTS_GRIND_MIN_ITERS 16384
+/* Constant-time floor: pad to 256 iterations (~40ms).
+ * Covers typical finds (~100-200) without hitting OS watchdog (~30s). */
+#define WOTS_GRIND_MIN_ITERS 256
 
 /* Grind counter until digit sum equals target */
 static bool wots_find_count(const uint8_t seed[SPHINCS_N],
@@ -490,9 +489,9 @@ static void build_subtree_sign(const uint8_t seed[SPHINCS_N],
  * R grinding (FORS+C)
  * ================================================================ */
 
-/* Minimum R grinding iterations to reduce timing side-channel.
- * Expected: ~2^SPHINCS_A = 2048 iterations. Pad to ~4× expected. */
-#define GRIND_R_MIN_ITERS 8192
+/* Constant-time floor: pad to 256 iterations (~40ms).
+ * Expected find at ~32 iters (5-bit forced zero). */
+#define GRIND_R_MIN_ITERS 256
 
 static bool grind_R(const uint8_t seed[SPHINCS_N],
                     const uint8_t root[SPHINCS_N],

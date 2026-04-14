@@ -36,7 +36,7 @@ endif
 include ./makefile_conf/chain/$(CHAIN).mk
 
 APPVERSION_M = 1
-APPVERSION_N = 32
+APPVERSION_N = 36
 APPVERSION_P = 0
 APPVERSION = $(APPVERSION_M).$(APPVERSION_N).$(APPVERSION_P)-dev
 

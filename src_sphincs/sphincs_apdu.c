@@ -6,6 +6,7 @@
 #include "sphincs_ui.h"
 #include "sphincs_core.h"
 #include "sphincs_params.h"
+#include "jardin_storage.h"
 
 #include <string.h>
 #include <stdint.h>
@@ -48,8 +49,11 @@ bool sign_approved = false;  /* extern'd by sphincs_ui.c */
 static uint16_t derive_sphincs_master(const uint32_t *path, uint8_t path_len,
                                        uint8_t master[32]) {
     uint8_t privkey[32];
-    os_perso_derive_node_bip32(CX_CURVE_256K1, path, path_len, privkey, NULL);
+    uint8_t chaincode[32]; /* some firmware versions hang with NULL chaincode */
 
+    os_perso_derive_node_bip32(CX_CURVE_256K1, path, path_len, privkey, chaincode);
+
+    /* Domain-separate: master = keccak256("sphincs-c11-v1" || bip32_privkey) */
     uint8_t buf[14 + 32];
     memcpy(buf, "sphincs-c11-v1", 14);
     memcpy(buf + 14, privkey, 32);
@@ -59,6 +63,7 @@ static uint16_t derive_sphincs_master(const uint32_t *path, uint8_t path_len,
     cx_hash_no_throw((cx_hash_t *)&sha3, CX_LAST, buf, 46, master, 32);
 
     explicit_bzero(privkey, 32);
+    explicit_bzero(chaincode, 32);
     explicit_bzero(buf, 46);
     return APDU_RESPONSE_OK;
 }
@@ -99,18 +104,10 @@ uint16_t handleGetSphincsPublicKey(uint8_t p1, uint8_t p2,
         uint16_t err = parse_path(data, length, path, &path_len);
         if (err != APDU_RESPONSE_OK) return err;
 
-        /* Derive master secret: keccak256("sphincs-c11-v1" || path_bytes)
-         * Use path bytes directly as entropy — avoids os_perso_derive_node_bip32
-         * which may block on newer firmware. For production, use BIP-32. */
+        /* Derive master secret from BIP-32 seed: device-bound key */
         uint8_t master[32];
-        {
-            cx_sha3_t sha3;
-            uint8_t buf[14 + 40];
-            memcpy(buf, "sphincs-c11-v1", 14);
-            memcpy(buf + 14, data + 1, path_len * 4);
-            cx_keccak_init_no_throw(&sha3, 256);
-            cx_hash_no_throw((cx_hash_t *)&sha3, CX_LAST, buf, 14 + path_len * 4, master, 32);
-        }
+        uint16_t deriv_err = derive_sphincs_master(path, path_len, master);
+        if (deriv_err != APDU_RESPONSE_OK) return deriv_err;
 
         /* Init chunked keygen — returns pk_seed immediately */
         uint8_t pk_seed[SPHINCS_N];
@@ -167,6 +164,9 @@ uint16_t handleGetSphincsPublicKey(uint8_t p1, uint8_t p2,
         memcpy(sphincs_sk.pk_root, pk_root, SPHINCS_N);
         memcpy(sphincs_pk.pk_root, pk_root, SPHINCS_N);
         keygen_in_progress = false;
+
+        /* Save C11 keys to NVRAM — avoids 125s re-derivation after power cycle */
+        jardin_nvram_save_c11(sphincs_sk.sk_seed, sphincs_pk.pk_seed, pk_root);
 
         /* Return pk_seed || pk_root (32 bytes) */
         memcpy(G_io_apdu_buffer, sphincs_pk.pk_seed, SPHINCS_N);

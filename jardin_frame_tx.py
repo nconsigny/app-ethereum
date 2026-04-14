@@ -133,10 +133,10 @@ def ledger_c11_keygen(dongle):
 def ledger_jardin_keygen(dongle, r_bytes):
     send(dongle, 0x44, p1=0x00, data=r_bytes)
     t0 = time.time()
-    for i in range(58):
+    for i in range(95):
         resp = send(dongle, 0x44, p1=0x02, timeout=10)
         if resp[1]: break
-        if (i+1) % 16 == 0: print(f"  JARDÍN keygen {i+1}/58 ({time.time()-t0:.0f}s)")
+        if (i+1) % 16 == 0: print(f"  JARDÍN keygen {i+1}/95 ({time.time()-t0:.0f}s)")
     resp = send(dongle, 0x44, p1=0x03)
     return bytes(resp[:16]), bytes(resp[16:32])
 

@@ -2,7 +2,7 @@
 """
 JARDÍN Type 2 test — register new slot + send compact FORS+C tx.
 
-Uses the already-deployed JardinAccount at 0xaafB0cE1a33a6161822827592b2D94666c474022.
+Uses the already-deployed JardinAccount at 0x0af0094a178Cef6AD74b3Da2B516BDc55e24acc9.
 Reuses the existing C11 master key (keygen must run first).
 """
 
@@ -14,7 +14,7 @@ from eth_account import Account
 from eth_abi import encode
 from Crypto.Hash import keccak as _k
 
-ACCOUNT = "0xaafB0cE1a33a6161822827592b2D94666c474022"
+ACCOUNT = "0x0af0094a178Cef6AD74b3Da2B516BDc55e24acc9"
 C11_VERIFIER = "0xC25ef566884DC36649c3618EEDF66d715427Fd74"
 FORSC_VERIFIER = "0xbf30042d23FAc4377021567CCf8152e611A7F9db"
 ENTRYPOINT = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
@@ -109,10 +109,10 @@ def main():
     r_bytes = b'\x01' * 32  # deterministic r for testing
     send(dongle, 0x44, p1=0x00, data=r_bytes)
     t0 = time.time()
-    for i in range(58):
+    for i in range(95):
         resp = send(dongle, 0x44, p1=0x02, timeout=10)
         if resp[1]: break
-        if (i+1)%8==0: print(f"  {i+1}/58 ({time.time()-t0:.0f}s)")
+        if (i+1)%8==0: print(f"  {i+1}/95 ({time.time()-t0:.0f}s)")
     resp = send(dongle, 0x44, p1=0x03)
     sub_seed = bytes(resp[:16]); sub_root = bytes(resp[16:32])
     print(f"  subPkSeed: {sub_seed.hex()}")

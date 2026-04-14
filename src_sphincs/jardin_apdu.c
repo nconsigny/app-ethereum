@@ -144,6 +144,15 @@ uint16_t handleJardinKeygen(uint8_t p1, uint8_t p2,
         jardin_keygen_state.step = JARDIN_Q_MAX;
         jardin_keygen_state.done = 1;
 
+        /* Restore C11 master keys (avoids 125s C11 keygen after power cycle) */
+        extern sphincs_secret_key_t sphincs_sk;
+        extern sphincs_public_key_t sphincs_pk;
+        memcpy(sphincs_sk.sk_seed, nv->c11_sk_seed, 32);
+        memcpy(sphincs_sk.pk_seed, nv->c11_pk_seed, JARDIN_N);
+        memcpy(sphincs_sk.pk_root, nv->c11_pk_root, JARDIN_N);
+        memcpy(sphincs_pk.pk_seed, nv->c11_pk_seed, JARDIN_N);
+        memcpy(sphincs_pk.pk_root, nv->c11_pk_root, JARDIN_N);
+
         /* Restore cached seed for th/th_pair operations */
         sphincs_set_seed(nv->sub_pk_seed);
 

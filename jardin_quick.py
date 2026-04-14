@@ -16,7 +16,7 @@ from eth_account import Account
 from eth_abi import encode
 from Crypto.Hash import keccak as _k
 
-ACCOUNT = "0xaafB0cE1a33a6161822827592b2D94666c474022"
+ACCOUNT = "0x0af0094a178Cef6AD74b3Da2B516BDc55e24acc9"
 ENTRYPOINT = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
 FORSC_VERIFIER = "0xbf30042d23FAc4377021567CCf8152e611A7F9db"
 CHAIN_ID = 11155111
@@ -63,6 +63,76 @@ def get_nonce(rpc):
         capture_output=True, text=True, timeout=30)
     return int(r.stdout.strip(), 16) if r.stdout.strip() else 0
 
+def do_register_slot(dongle, rpc, privkey, r_bytes, sub_seed, sub_root):
+    """Register existing NVRAM slot on-chain via Type 1 (C11 sign only).
+    C11 keys are restored from NVRAM — no C11 keygen needed."""
+    acct = Account.from_key(bytes.fromhex(privkey))
+    h_r = keccak(r_bytes)
+
+    # C11 keys already restored from NVRAM by P1=0x04
+
+    # Type 1 UserOp
+    print("\n--- Type 1: Register Slot ---")
+    nonce = get_nonce(rpc)
+    vg, cg, pvg = 300_000, 50_000, 100_000
+    mp, mf = 1*10**9, 5*10**9
+    op = {"sender":ACCOUNT,"nonce":hex(nonce),"initCode":"0x","callData":"0x",
+          "accountGasLimits":"0x"+(vg.to_bytes(16,"big")+cg.to_bytes(16,"big")).hex(),
+          "preVerificationGas":hex(pvg),
+          "gasFees":"0x"+(mp.to_bytes(16,"big")+mf.to_bytes(16,"big")).hex(),
+          "paymasterAndData":"0x","signature":"0x"}
+    op_hash = compute_userop_hash(op)
+
+    signed = acct.unsafe_sign_hash(op_hash)
+    ecdsa = signed.r.to_bytes(32,"big")+signed.s.to_bytes(32,"big")+signed.v.to_bytes(1,"big")
+
+    # C11 sign
+    print("  >>> APPROVE C11 SIGN ON DEVICE <<<")
+    send(dongle, 0x42, p1=0x00, data=bytes([5])+struct.pack('>5I',*BIP32_PATH)+op_hash, timeout=60)
+    t0 = time.time(); steps = 0
+    while True:
+        try:
+            resp = send(dongle, 0x42, p1=0x04, timeout=30); steps += 1
+        except Exception as e:
+            print(f"  Sign step error: {e}")
+            break
+        if steps%64==0: print(f"  Step {steps} ({time.time()-t0:.0f}s)")
+        if len(resp) >= 4 and resp[3]:
+            break
+        if len(resp) < 4:
+            break
+    print(f"  C11 sign: {steps} steps in {time.time()-t0:.0f}s")
+    c11_sig = b""
+    while len(c11_sig) < 3976:
+        try:
+            resp = send(dongle, 0x42, p1=0x80, timeout=10)
+            c11_sig += bytes(resp)
+        except:
+            break
+    if len(c11_sig) < 3976:
+        print(f"  ERROR: C11 sig incomplete ({len(c11_sig)}/3976 bytes)")
+        return False
+
+    type1 = bytes([0x01]) + ecdsa + r_bytes + sub_seed + sub_root + c11_sig
+    op["signature"] = "0x" + type1.hex()
+    print(f"  Type 1 sig: {len(type1)} bytes")
+    print("  Submitting Type 1...")
+
+    t = (bytes.fromhex(op["sender"][2:]), int(op["nonce"],16), b"",
+         bytes.fromhex(op["callData"][2:]) if op["callData"]!="0x" else b"",
+         bytes.fromhex(op["accountGasLimits"][2:]), int(op["preVerificationGas"],16),
+         bytes.fromhex(op["gasFees"][2:]), b"", bytes.fromhex(op["signature"][2:]))
+    sel = keccak(b"handleOps((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[],address)")[:4]
+    p = encode(["(address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[]","address"],
+               [[t], bytes.fromhex(acct.address[2:])])
+    r = subprocess.run(["cast","send",ENTRYPOINT,"0x"+(sel+p).hex(),"--rpc-url",rpc,
+        "--private-key","0x"+privkey,"--gas-limit","500000"],
+        capture_output=True, text=True, timeout=120)
+    for line in r.stdout.split('\n'):
+        if 'transactionHash' in line: print(f"  TX: {line.split()[-1]}")
+        if 'status' in line: print(f"  Status: {line.split()[-1]}")
+    return True
+
 def do_fresh_slot(dongle, rpc, privkey):
     """NVRAM lost — old r is dead. Generate fresh r, keygen, register new slot (Type 1).
     Never reuse an r without a verified q — that's how double-signs happen."""
@@ -87,13 +157,13 @@ def do_fresh_slot(dongle, rpc, privkey):
     print(f"  C11 keygen: {time.time()-t0:.0f}s")
 
     # JARDÍN keygen with fresh r
-    print(f"\n--- JARDÍN Keygen (~145s) ---")
+    print(f"\n--- JARDÍN Keygen (~238s) ---")
     send(dongle, 0x44, p1=0x00, data=r_bytes)
     t0 = time.time()
-    for i in range(58):
+    for i in range(95):
         resp = send(dongle, 0x44, p1=0x02, timeout=10)
         if resp[1]: break
-        if (i+1)%8==0: print(f"  {i+1}/58 ({time.time()-t0:.0f}s)")
+        if (i+1)%8==0: print(f"  {i+1}/95 ({time.time()-t0:.0f}s)")
     resp = send(dongle, 0x44, p1=0x03)
     sub_seed = bytes(resp[:16]); sub_root = bytes(resp[16:32])
     h_r = keccak(r_bytes)
@@ -120,13 +190,29 @@ def do_fresh_slot(dongle, rpc, privkey):
     send(dongle, 0x42, p1=0x00, data=bytes([5])+struct.pack('>5I',*BIP32_PATH)+op_hash, timeout=60)
     t0 = time.time(); steps = 0
     while True:
-        resp = send(dongle, 0x42, p1=0x04, timeout=10); steps += 1
+        try:
+            resp = send(dongle, 0x42, p1=0x04, timeout=30); steps += 1
+        except Exception as e:
+            # 6985 = sign_approved is false, meaning DONE was reached on previous step
+            break
         if steps%64==0: print(f"  Step {steps} ({time.time()-t0:.0f}s)")
-        if resp[3]: break
-    print(f"  C11 sign: {time.time()-t0:.0f}s")
+        if len(resp) >= 4 and resp[3]:
+            break
+        if len(resp) < 4:
+            break
+    print(f"  C11 sign: {steps} steps in {time.time()-t0:.0f}s")
     c11_sig = b""
     while len(c11_sig) < 3976:
-        resp = send(dongle, 0x42, p1=0x80, timeout=10); c11_sig += bytes(resp)
+        try:
+            resp = send(dongle, 0x42, p1=0x80, timeout=10)
+            c11_sig += bytes(resp)
+        except:
+            break
+    if len(c11_sig) < 3976:
+        print(f"  ERROR: C11 sig incomplete ({len(c11_sig)}/3976 bytes)")
+        print(f"  Got {len(c11_sig)} bytes. The signing may have completed but chunks aren't ready.")
+        dongle.close()
+        sys.exit(1)
 
     type1 = bytes([0x01]) + ecdsa + r_bytes + sub_seed + sub_root + c11_sig
     op["signature"] = "0x" + type1.hex()
@@ -150,6 +236,11 @@ def do_fresh_slot(dongle, rpc, privkey):
     return sub_seed, sub_root, h_r
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--register", action="store_true", help="Register NVRAM slot on-chain (Type 1)")
+    args = parser.parse_args()
+
     env = load_env()
     rpc = env.get("SEPOLIA_RPC_URL",""); privkey = env.get("PRIVATE_KEY","").replace("0x","")
     acct = Account.from_key(bytes.fromhex(privkey))
@@ -177,10 +268,17 @@ def main():
         print(f"  subPkSeed: {sub_seed.hex()}")
         print(f"  subPkRoot: {sub_root.hex()}")
 
-        if q > 58:
-            print(f"  Slot exhausted (q={q} > Q_MAX=58) — registering fresh slot")
+        if q > 95:
+            print(f"  Slot exhausted (q={q} > Q_MAX=95) — registering fresh slot")
             sub_seed, sub_root, h_r = do_fresh_slot(dongle, rpc, privkey)
             q = 1
+        elif args.register:
+            print("  Registering existing slot on-chain (Type 1)...")
+            ok = do_register_slot(dongle, rpc, privkey, nv_r, sub_seed, sub_root)
+            if not ok:
+                dongle.close(); sys.exit(1)
+            # Restore JARDÍN state after C11 keygen (C11 overwrites seed cache)
+            send(dongle, 0x44, p1=0x04)
     except Exception as e:
         print(f"  NVRAM empty ({e})")
         print("  Old r is dead — generating fresh slot (requires Type 1 registration)")

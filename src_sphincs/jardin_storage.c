@@ -48,6 +48,14 @@ void jardin_nvram_save_full(const uint8_t r[32],
     nvm_write((void *)PIC(&N_jardin_real.initialized), &magic, 1);
 }
 
+void jardin_nvram_save_c11(const uint8_t c11_sk_seed[32],
+                           const uint8_t c11_pk_seed[JARDIN_N],
+                           const uint8_t c11_pk_root[JARDIN_N]) {
+    nvm_write((void *)PIC(&N_jardin_real.c11_sk_seed), c11_sk_seed, 32);
+    nvm_write((void *)PIC(&N_jardin_real.c11_pk_seed), c11_pk_seed, JARDIN_N);
+    nvm_write((void *)PIC(&N_jardin_real.c11_pk_root), c11_pk_root, JARDIN_N);
+}
+
 bool jardin_nvram_is_valid(void) {
     return N_jardin.initialized == JARDIN_NVRAM_MAGIC
         && N_jardin.q_max == JARDIN_Q_MAX;

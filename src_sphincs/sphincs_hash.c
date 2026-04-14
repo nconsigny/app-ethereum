@@ -92,6 +92,11 @@ static void pad_n_to_32(uint8_t out[32], const uint8_t in[SPHINCS_N]) {
 static uint8_t g_seed_padded[32];
 static bool g_seed_set = false;
 
+/* Static buffers for th/th_pair to avoid re-allocation on each call.
+ * Safe because SPHINCS+ is single-threaded. */
+static uint8_t g_th_buf[128];  /* max size needed (th_pair uses 128) */
+static uint8_t g_th_hash[32];
+
 /* Precomputed keccak state with seed absorbed — clone-and-continue pattern
  * from the SPHINCS+ reference implementation (hash_sha2.c:seed_state).
  * Saves re-absorbing the 32-byte seed on every th_multi call. */
@@ -105,11 +110,6 @@ void sphincs_set_seed(const uint8_t seed[SPHINCS_N]) {
     cx_hash_no_throw((cx_hash_t *)&g_seeded_ctx, 0, g_seed_padded, 32, NULL, 0);
     g_seed_set = true;
 }
-
-/* Static buffers for th/th_pair to avoid re-allocation on each call.
- * Safe because SPHINCS+ is single-threaded. */
-static uint8_t g_th_buf[128];  /* max size needed (th_pair uses 128) */
-static uint8_t g_th_hash[32];
 
 void sphincs_th(const uint8_t seed[SPHINCS_N],
                 const uint8_t adrs[32],

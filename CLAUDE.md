@@ -25,7 +25,7 @@ python3 -m ledgerblue.loadApp \
   --appName "EthSPHINCS" \
   --appFlags 0x800 \
   --tlv \
-  --dataSize 2048 \
+  --dataSize 4096 \
   --installparamsSize 92 \
   --path "44'/60'" \
   --curve secp256k1
@@ -33,7 +33,7 @@ python3 -m ledgerblue.loadApp \
 
 **Critical flags**:
 - `--targetVersion=""` — without this you get `680f` (invalid signature) at commit step
-- `--dataSize 2048` — NVRAM holds full signing state (~1138 bytes); 0 causes `5101` (not enough memory)
+- `--dataSize 4096` — NVRAM holds full signing state (~1138 bytes); 0 causes `5101` (not enough memory)
 - `--installparamsSize 92` — from linker map `_einstall_parameters - _install_parameters`
 - `--appFlags 0x800` — library flag matching upstream Ethereum app
 
@@ -95,7 +95,7 @@ Bump `APPVERSION_N` in `Makefile` (line 39) before each sideload to verify the n
 - Write via `nvm_write()` only
 - Survives power cycles, app close/reopen
 - Stores FULL signing state: `r`, `sk_seed`, `sub_seed`, `sub_root`, `q`, `fors_pks[32]`, `spine[32]`, `sentinel` (~1138 bytes)
-- **CRITICAL: `--dataSize 2048` must never change between sideloads.** Changing it wipes NVRAM, which destroys the q counter. If NVRAM is lost, the old r is dead — generate a fresh r and re-register (Type 1). Never reuse an r without a verified q.
+- **CRITICAL: `--dataSize 4096` must never change between sideloads.** Changing it wipes NVRAM, which destroys the q counter. If NVRAM is lost, the old r is dead — generate a fresh r and re-register (Type 1). Never reuse an r without a verified q.
 
 ### Treehash merge condition bug (fixed)
 - Original: `while (level < stack_top && (idx & 1) == 1)` — WRONG
@@ -138,7 +138,7 @@ When a signature fails on-chain:
 | JARDÍN FORS+C Verifier | `0xbf30042d23FAc4377021567CCf8152e611A7F9db` |
 | JARDÍN Account Factory | `0xa6A947A3A878EAF742179884c996cFE80cD8F5F9` |
 | EntryPoint v0.9 | `0x433709009B8330FDa32311DF1C2AFA402eD8D009` |
-| JardinAccount (test) | `0xaafB0cE1a33a6161822827592b2D94666c474022` |
+| JardinAccount (test) | `0x0af0094a178Cef6AD74b3Da2B516BDc55e24acc9` |
 
 ## Milestones
 
@@ -148,8 +148,8 @@ When a signature fails on-chain:
 
 ```
 C11 master key:
-  path_data = encode_bip32(m/44'/60'/0'/0/0)
-  master = keccak256("sphincs-c11-v1" || path_bytes)
+  bip32_privkey = os_perso_derive_node_bip32(secp256k1, m/44'/60'/0'/0/0)
+  master = keccak256("sphincs-c11-v1" || bip32_privkey)
   entropy = keccak256("sphincs_signer_v1" || master)
   pk_seed = keccak256("pk_seed" || entropy) & N_MASK
   sk_seed = keccak256("sk_seed" || entropy)

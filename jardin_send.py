@@ -19,7 +19,7 @@ from eth_account import Account
 from eth_abi import encode
 from Crypto.Hash import keccak as _k
 
-ACCOUNT = "0xaafB0cE1a33a6161822827592b2D94666c474022"
+ACCOUNT = "0x0af0094a178Cef6AD74b3Da2B516BDc55e24acc9"
 ENTRYPOINT = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
 CHAIN_ID = 11155111
 CLA = 0xE0
@@ -192,8 +192,8 @@ def main():
     resp = send(dongle, 0x06)
     print(f"Version: {resp[1]}.{resp[2]}.{resp[3]}")
 
-    if q > 58:
-        print(f"Slot exhausted (q={q} > Q_MAX=58). Run jardin_quick.py to register a fresh slot.")
+    if q > 95:
+        print(f"Slot exhausted (q={q} > Q_MAX=95). Run jardin_quick.py to register a fresh slot.")
         dongle.close()
         sys.exit(1)
 

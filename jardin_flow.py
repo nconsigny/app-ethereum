@@ -175,10 +175,10 @@ def ledger_jardin_keygen(dongle, r_bytes):
     print(f"  subPkSeed: {sub_seed.hex()}")
 
     t0 = time.time()
-    for i in range(58):
+    for i in range(95):
         resp = send(dongle, 0x44, p1=0x02, timeout=10)
         if resp[1]: break
-        if (i+1) % 8 == 0: print(f"  Step {i+1}/58 ({time.time()-t0:.0f}s)")
+        if (i+1) % 8 == 0: print(f"  Step {i+1}/95 ({time.time()-t0:.0f}s)")
 
     resp = send(dongle, 0x44, p1=0x03)
     sub_root = bytes(resp[16:32])
