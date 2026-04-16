@@ -103,14 +103,13 @@ uint16_t handleJardinKeygen(uint8_t p1, uint8_t p2,
         memcpy(jardin_pk.pk_root, pk_root, JARDIN_N);
         jardin_key_ready = true;
 
-        /* Save FULL state to NVRAM — instant restore after power cycle */
+        /* Save slot identity + leaves to NVRAM. Internal Merkle nodes are
+         * rebuilt on load (~127 hashes). Keeps NVRAM at ~2.2KB. */
         jardin_nvram_save_full(
             jardin_current_r,
             jardin_pk.pk_seed, pk_root,
             jardin_keygen_state.sk_seed,
             (const uint8_t (*)[JARDIN_N])jardin_keygen_state.fors_pks,
-            (const uint8_t (*)[JARDIN_N])jardin_keygen_state.spine,
-            jardin_keygen_state.sentinel,
             1);
 
         memcpy(G_io_apdu_buffer, jardin_pk.pk_seed, JARDIN_N);
@@ -120,8 +119,8 @@ uint16_t handleJardinKeygen(uint8_t p1, uint8_t p2,
     }
 
     if (p1 == P1_JARDIN_LOAD_NVRAM) {
-        /* Instant restore from NVRAM — no C11 keygen, no rebuild needed.
-         * Full signing state (sk_seed, fors_pks, spine, sentinel) is in NVRAM. */
+        /* Restore from NVRAM. Leaves are stored; internal Merkle nodes are
+         * rebuilt from leaves (~127 hashes, <1s). */
         if (!jardin_nvram_is_valid()) return APDU_RESPONSE_CONDITION_NOT_SATISFIED;
 
         const jardin_nvram_t *nv = jardin_nvram_get();
@@ -135,14 +134,17 @@ uint16_t handleJardinKeygen(uint8_t p1, uint8_t p2,
         memcpy(jardin_pk.pk_seed, nv->sub_pk_seed, JARDIN_N);
         memcpy(jardin_pk.pk_root, nv->sub_pk_root, JARDIN_N);
 
-        /* Restore keygen state (needed for auth paths during signing) */
+        /* Restore keygen state (needed for auth paths during signing).
+         * Merkle internals are not stored in NVRAM — rebuild from leaves. */
         memcpy(jardin_keygen_state.seed, nv->sub_pk_seed, JARDIN_N);
         memcpy(jardin_keygen_state.sk_seed, nv->sk_seed, 32);
         memcpy(jardin_keygen_state.fors_pks, nv->fors_pks, JARDIN_Q_MAX * JARDIN_N);
-        memcpy(jardin_keygen_state.spine, nv->spine, JARDIN_Q_MAX * JARDIN_N);
-        memcpy(jardin_keygen_state.sentinel, nv->sentinel, JARDIN_N);
         jardin_keygen_state.step = JARDIN_Q_MAX;
         jardin_keygen_state.done = 1;
+
+        /* Seed must be cached before th_pair calls below. */
+        sphincs_set_seed(nv->sub_pk_seed);
+        jardin_rebuild_merkle_nodes(&jardin_keygen_state);
 
         /* Restore C11 master keys (avoids 125s C11 keygen after power cycle) */
         extern sphincs_secret_key_t sphincs_sk;
@@ -152,9 +154,6 @@ uint16_t handleJardinKeygen(uint8_t p1, uint8_t p2,
         memcpy(sphincs_sk.pk_root, nv->c11_pk_root, JARDIN_N);
         memcpy(sphincs_pk.pk_seed, nv->c11_pk_seed, JARDIN_N);
         memcpy(sphincs_pk.pk_root, nv->c11_pk_root, JARDIN_N);
-
-        /* Restore cached seed for th/th_pair operations */
-        sphincs_set_seed(nv->sub_pk_seed);
 
         memcpy(jardin_current_r, nv->r, 32);
         jardin_key_ready = true;

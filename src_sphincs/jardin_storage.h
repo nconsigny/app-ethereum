@@ -1,11 +1,11 @@
 /**
  * JARDÍN NVRAM Storage — persists across power cycles on Nano S+
  *
- * Stores the FULL signing state: slot identity + keygen state (spine,
- * fors_pks, sentinel, sk_seed). After power cycle, a single APDU
- * restores everything — no C11 keygen or JARDÍN rebuild needed.
+ * Stores the slot identity + FORS+C leaf public keys. After power cycle,
+ * a single LOAD_NVRAM APDU restores the keygen state; the 127 internal
+ * Merkle nodes are rebuilt on-the-fly from the leaves (~127 hashes, <1s).
  *
- * After keygen finalize: full state saved (~1138 bytes).
+ * After keygen finalize: full state saved (~2211 bytes).
  * For each Type 2 sign: q is incremented.
  * After Q_MAX uses: clear and re-register a new slot.
  */
@@ -16,12 +16,11 @@
 #include <stdbool.h>
 #include "jardin_params.h"
 
-/* NVRAM-backed storage struct (~3.2KB with Q_MAX=95) */
 typedef struct {
     /* Slot identity (needed for on-chain slot lookup) */
     uint8_t  r[32];                            /* slot random */
     uint8_t  sub_pk_seed[JARDIN_N];            /* 16B sub-key seed */
-    uint8_t  sub_pk_root[JARDIN_N];            /* 16B sub-key root */
+    uint8_t  sub_pk_root[JARDIN_N];            /* 16B sub-key root (balanced tree root) */
 
     /* JARDÍN signing secrets */
     uint8_t  sk_seed[32];                      /* 32B JARDÍN secret seed */
@@ -31,28 +30,25 @@ typedef struct {
     uint8_t  c11_pk_seed[JARDIN_N];            /* 16B C11 public seed */
     uint8_t  c11_pk_root[JARDIN_N];            /* 16B C11 public root */
 
-    /* Keygen state (needed for unbalanced auth paths during signing) */
-    uint8_t  fors_pks[JARDIN_Q_MAX][JARDIN_N]; /* Q_MAX×16B */
-    uint8_t  spine[JARDIN_Q_MAX][JARDIN_N];    /* Q_MAX×16B */
-    uint8_t  sentinel[JARDIN_N];               /* 16B */
+    /* FORS+C public keys (the 128 balanced-tree leaves) */
+    uint8_t  fors_pks[JARDIN_Q_MAX][JARDIN_N]; /* 128 * 16 = 2048B */
 
     /* Counters + version */
-    uint8_t  q;                                /* next leaf index (1-indexed) */
+    uint8_t  q;                                /* next leaf index (1-indexed, 1..128) */
     uint8_t  q_max;                            /* Q_MAX used during keygen */
-    uint8_t  initialized;                      /* 0xA7 = valid data (v3 with c11) */
+    uint8_t  initialized;                      /* magic byte */
 } jardin_nvram_t;
 
-#define JARDIN_NVRAM_MAGIC 0xA7  /* bumped to invalidate old data without c11 keys */
+/* Bumped for balanced-tree layout: old unbalanced-spine state is rejected. */
+#define JARDIN_NVRAM_MAGIC 0xA8
 
 /** Save full state to NVRAM. Call after JARDÍN keygen finalize.
- *  Writes field-by-field to avoid 1KB+ stack allocation. */
+ *  Writes field-by-field to avoid ~2KB stack allocation. */
 void jardin_nvram_save_full(const uint8_t r[32],
                             const uint8_t sub_pk_seed[JARDIN_N],
                             const uint8_t sub_pk_root[JARDIN_N],
                             const uint8_t sk_seed[32],
                             const uint8_t fors_pks[][JARDIN_N],
-                            const uint8_t spine[][JARDIN_N],
-                            const uint8_t sentinel[JARDIN_N],
                             uint8_t q);
 
 /** Save C11 master key material to NVRAM. Call after C11 keygen finalize. */

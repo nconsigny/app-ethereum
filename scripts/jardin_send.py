@@ -192,8 +192,9 @@ def main():
     resp = send(dongle, 0x06)
     print(f"Version: {resp[1]}.{resp[2]}.{resp[3]}")
 
-    if q > 95:
-        print(f"Slot exhausted (q={q} > Q_MAX=95). Run jardin_quick.py to register a fresh slot.")
+    Q_MAX = 128
+    if q > Q_MAX:
+        print(f"Slot exhausted (q={q} > Q_MAX={Q_MAX}). Run jardin_quick.py to register a fresh slot.")
         dongle.close()
         sys.exit(1)
 
@@ -234,7 +235,8 @@ def main():
     t0 = time.time()
     resp = send(dongle, 0x46, p1=0x01, timeout=30)
     sig = bytes(resp)
-    while len(sig) < 2452 + q * 16:
+    JARDIN_SIG_LEN = 2565  # constant: 2452 + 1 (q) + 7*16 (merkle auth)
+    while len(sig) < JARDIN_SIG_LEN:
         try:
             resp = send(dongle, 0x46, p1=0x80, timeout=5)
             sig += bytes(resp)

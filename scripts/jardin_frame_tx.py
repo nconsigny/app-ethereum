@@ -130,13 +130,16 @@ def ledger_c11_keygen(dongle):
     resp = send(dongle, 0x40, p1=0x03)
     return bytes(resp[:16]), bytes(resp[16:32])
 
+Q_MAX = 128
+JARDIN_SIG_LEN = 2565  # balanced tree, constant
+
 def ledger_jardin_keygen(dongle, r_bytes):
     send(dongle, 0x44, p1=0x00, data=r_bytes)
     t0 = time.time()
-    for i in range(95):
+    for i in range(Q_MAX + 4):
         resp = send(dongle, 0x44, p1=0x02, timeout=10)
         if resp[1]: break
-        if (i+1) % 16 == 0: print(f"  JARDÍN keygen {i+1}/95 ({time.time()-t0:.0f}s)")
+        if (i+1) % 16 == 0: print(f"  JARDÍN keygen {i+1}/{Q_MAX} ({time.time()-t0:.0f}s)")
     resp = send(dongle, 0x44, p1=0x03)
     return bytes(resp[:16]), bytes(resp[16:32])
 
@@ -161,7 +164,7 @@ def ledger_jardin_sign(dongle, q, sig_hash_bytes):
     t0 = time.time()
     resp = send(dongle, 0x46, p1=0x01, timeout=30)
     sig = bytes(resp)
-    while len(sig) < 2452 + q * 16:
+    while len(sig) < JARDIN_SIG_LEN:
         try:
             resp = send(dongle, 0x46, p1=0x80, timeout=5)
             sig += bytes(resp)

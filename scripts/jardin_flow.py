@@ -167,18 +167,21 @@ def ledger_c11_keygen(dongle):
     print(f"  Keygen: {time.time()-t0:.0f}s")
     return pk_seed, pk_root
 
+Q_MAX = 128
+JARDIN_SIG_LEN = 2565  # balanced tree, constant
+
 def ledger_jardin_keygen(dongle, r_bytes):
     """JARDÍN sub-key keygen — chunked."""
-    print("\n=== JARDÍN Sub-Key Keygen (~80s) ===")
+    print(f"\n=== JARDÍN Sub-Key Keygen (~320s, {Q_MAX} leaves) ===")
     resp = send(dongle, 0x44, p1=0x00, data=r_bytes)
     sub_seed = bytes(resp[:16])
     print(f"  subPkSeed: {sub_seed.hex()}")
 
     t0 = time.time()
-    for i in range(95):
+    for i in range(Q_MAX + 4):
         resp = send(dongle, 0x44, p1=0x02, timeout=10)
         if resp[1]: break
-        if (i+1) % 8 == 0: print(f"  Step {i+1}/95 ({time.time()-t0:.0f}s)")
+        if (i+1) % 8 == 0: print(f"  Step {i+1}/{Q_MAX} ({time.time()-t0:.0f}s)")
 
     resp = send(dongle, 0x44, p1=0x03)
     sub_root = bytes(resp[16:32])
@@ -221,9 +224,7 @@ def ledger_jardin_sign(dongle, q, msg_hash):
     resp = send(dongle, 0x46, p1=0x01, timeout=30)
 
     sig = bytes(resp)
-    # Collect remaining chunks until sig_pending is cleared
-    expected_min = 2452 + 1 * 16  # FORSC_BODY + q*N minimum
-    while len(sig) < expected_min:
+    while len(sig) < JARDIN_SIG_LEN:
         try:
             resp = send(dongle, 0x46, p1=0x80, timeout=5)
             sig += bytes(resp)

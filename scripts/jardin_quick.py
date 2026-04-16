@@ -2,11 +2,15 @@
 """
 Quick Type 2 test — instant NVRAM restore + sign in ~3 seconds.
 
-After first keygen, NVRAM stores the full signing state (sk_seed, spine,
-fors_pks, sentinel). Power cycle just needs one APDU to restore, then sign.
+After first keygen, NVRAM stores the 128 balanced-tree FORS+C leaves plus
+slot metadata. Power cycle rebuilds the 127 internal Merkle nodes from
+leaves (~127 hashes, <1s), then signing is ~3s.
 
 If NVRAM is empty (first run or after sideload), falls back to full keygen.
 """
+
+Q_MAX = 128
+JARDIN_SIG_LEN = 2565  # balanced tree, constant
 
 import sys, os, time, struct, subprocess, json
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "SPHINCs-", "SPHINCs-", "script"))
@@ -156,14 +160,14 @@ def do_fresh_slot(dongle, rpc, privkey):
     print(f"  pk_root: {bytes(resp[16:32]).hex()}")
     print(f"  C11 keygen: {time.time()-t0:.0f}s")
 
-    # JARDÍN keygen with fresh r
-    print(f"\n--- JARDÍN Keygen (~238s) ---")
+    # JARDÍN keygen with fresh r (~320s: 128 steps × ~2.5s)
+    print(f"\n--- JARDÍN Keygen (~320s) ---")
     send(dongle, 0x44, p1=0x00, data=r_bytes)
     t0 = time.time()
-    for i in range(95):
+    for i in range(Q_MAX + 4):
         resp = send(dongle, 0x44, p1=0x02, timeout=10)
         if resp[1]: break
-        if (i+1)%8==0: print(f"  {i+1}/95 ({time.time()-t0:.0f}s)")
+        if (i+1)%8==0: print(f"  {i+1}/{Q_MAX} ({time.time()-t0:.0f}s)")
     resp = send(dongle, 0x44, p1=0x03)
     sub_seed = bytes(resp[:16]); sub_root = bytes(resp[16:32])
     h_r = keccak(r_bytes)
@@ -268,8 +272,8 @@ def main():
         print(f"  subPkSeed: {sub_seed.hex()}")
         print(f"  subPkRoot: {sub_root.hex()}")
 
-        if q > 95:
-            print(f"  Slot exhausted (q={q} > Q_MAX=95) — registering fresh slot")
+        if q > Q_MAX:
+            print(f"  Slot exhausted (q={q} > Q_MAX={Q_MAX}) — registering fresh slot")
             sub_seed, sub_root, h_r = do_fresh_slot(dongle, rpc, privkey)
             q = 1
         elif args.register:
@@ -311,7 +315,7 @@ def main():
     t0 = time.time()
     resp = send(dongle, 0x46, p1=0x01, timeout=30)
     jardin_sig = bytes(resp)
-    while len(jardin_sig) < 2452 + q * 16:
+    while len(jardin_sig) < JARDIN_SIG_LEN:
         try:
             resp = send(dongle, 0x46, p1=0x80, timeout=5)
             jardin_sig += bytes(resp)
@@ -320,7 +324,7 @@ def main():
 
     # Direct verify sanity check
     print("\n--- Direct Verify ---")
-    sel_verify = keccak(b"verifyForsCUnbalanced(bytes32,bytes32,bytes32,bytes)")[:4]
+    sel_verify = keccak(b"verifyForsC(bytes32,bytes32,bytes32,bytes)")[:4]
     params = encode(["bytes32","bytes32","bytes32","bytes"],
                     [sub_seed + b'\x00'*16, sub_root + b'\x00'*16, op_hash, jardin_sig])
     result = subprocess.run(["cast","call","--rpc-url",rpc,FORSC_VERIFIER,

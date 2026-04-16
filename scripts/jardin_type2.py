@@ -105,14 +105,15 @@ def main():
     print(f"  pk_root: {bytes(resp[16:32]).hex()}")
 
     # JARDÍN keygen with deterministic r (for reproducibility)
-    print("\n--- JARDÍN Keygen (r=0x01...01) ---")
+    Q_MAX = 128
+    print(f"\n--- JARDÍN Keygen (r=0x01...01, {Q_MAX} leaves) ---")
     r_bytes = b'\x01' * 32  # deterministic r for testing
     send(dongle, 0x44, p1=0x00, data=r_bytes)
     t0 = time.time()
-    for i in range(95):
+    for i in range(Q_MAX + 4):
         resp = send(dongle, 0x44, p1=0x02, timeout=10)
         if resp[1]: break
-        if (i+1)%8==0: print(f"  {i+1}/95 ({time.time()-t0:.0f}s)")
+        if (i+1)%8==0: print(f"  {i+1}/{Q_MAX} ({time.time()-t0:.0f}s)")
     resp = send(dongle, 0x44, p1=0x03)
     sub_seed = bytes(resp[:16]); sub_root = bytes(resp[16:32])
     print(f"  subPkSeed: {sub_seed.hex()}")
@@ -198,7 +199,8 @@ def main():
     t0 = time.time()
     resp = send(dongle, 0x46, p1=0x01, timeout=30)
     jardin_sig = bytes(resp)
-    while len(jardin_sig) < 2452 + 16:
+    JARDIN_SIG_LEN = 2565  # balanced tree, constant
+    while len(jardin_sig) < JARDIN_SIG_LEN:
         try:
             resp = send(dongle, 0x46, p1=0x80, timeout=5)
             jardin_sig += bytes(resp)

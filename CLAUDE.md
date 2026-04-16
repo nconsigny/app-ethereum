@@ -60,8 +60,8 @@ Bump `APPVERSION_N` in `Makefile` (line 39) before each sideload to verify the n
 | 0x42 | 0x04 | C11 sign step | ~500ms-3s |
 | 0x42 | 0x80 | C11 sign chunk (250B) | instant |
 | 0x44 | 0x00 | JARDÍN keygen init (r[32]) | instant |
-| 0x44 | 0x02 | JARDÍN keygen step (one FORS PK) | ~2.5s |
-| 0x44 | 0x03 | JARDÍN keygen finalize → subPkRoot | instant |
+| 0x44 | 0x02 | JARDÍN keygen step (one FORS PK, 128 total) | ~2.5s |
+| 0x44 | 0x03 | JARDÍN keygen finalize (builds balanced tree) → subPkRoot | ~0.1s |
 | 0x44 | 0x04 | JARDÍN load from NVRAM | instant |
 | 0x44 | 0x05 | JARDÍN get state | instant |
 | 0x46 | 0x00 | JARDÍN sign init (q + hash, shows confirm) | async |
@@ -86,7 +86,7 @@ Bump `APPVERSION_N` in `Makefile` (line 39) before each sideload to verify the n
 ### RAM (BSS ~40KB page-aligned)
 - `sphincs_sig_buf` overlaid on `mem_buffer` (16KB from `mem_utils.c`, made non-static)
 - Signing and tx parsing never run concurrently — safe to share
-- `jardin_keygen_state` is ~1.1KB (32 FORS PKs + spine)
+- `jardin_keygen_state` is ~4.1KB (128 FORS PKs + 127 balanced-tree internals)
 - `.data` section must be empty — no initialized global pointers (`uint8_t *p = buffer` fails linker)
 
 ### NVRAM persistence
@@ -94,7 +94,7 @@ Bump `APPVERSION_N` in `Makefile` (line 39) before each sideload to verify the n
 - Access via `PIC()` macro: `(*(volatile jardin_nvram_t *)PIC(&N_jardin_real))`
 - Write via `nvm_write()` only
 - Survives power cycles, app close/reopen
-- Stores FULL signing state: `r`, `sk_seed`, `sub_seed`, `sub_root`, `q`, `fors_pks[32]`, `spine[32]`, `sentinel` (~1138 bytes)
+- Stores slot identity + 128 FORS+C leaves: `r`, `sk_seed`, `sub_seed`, `sub_root`, `c11_*`, `fors_pks[128]`, `q` (~2211 bytes). Internal Merkle nodes are rebuilt on load (~127 hashes, <1s).
 - **CRITICAL: `--dataSize 4096` must never change between sideloads.** Changing it wipes NVRAM, which destroys the q counter. If NVRAM is lost, the old r is dead — generate a fresh r and re-register (Type 1). Never reuse an r without a verified q.
 
 ### Treehash merge condition bug (fixed)
@@ -143,6 +143,7 @@ When a signature fails on-chain:
 ## Milestones
 
 - **v1.28.0**: Type 2 UserOp verified on Sepolia (TX `0xac505d32...1b9c8a`). 3.2s FORS+C sign, 193K gas. Fixed `sphincs_set_seed` cache corruption bug.
+- **v1.37.0**: Balanced Merkle tree (h=7, Q_MAX=128). Constant 2565-byte Type 2 signatures. ADRS follows FIPS 205 convention (`kp=0`, `y`=continuous tree index). NVRAM stores only the 128 leaves; internals rebuild on load. Sig format: `R(32)+ctr(4)+25*(sec16+auth80)+lastRoot(16)+q(1)+7*16 (merkle auth)`.
 
 ## Key Derivation (must match between C, Python, and Solidity)
 
