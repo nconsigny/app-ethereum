@@ -32,3 +32,20 @@ void ui_jardin_confirm_sign(const uint8_t msg_hash[32], uint8_t q);
  * Call after last JARDÍN signature chunk is sent.
  */
 void ui_jardin_sign_done(void);
+
+/**
+ * Show JARDINERO T0 signing confirmation screen.
+ * On approval, sets t0_sign_approved = true so chunked signing can proceed.
+ */
+void ui_t0_confirm_sign(const uint8_t msg_hash[32]);
+
+/**
+ * Garden-themed progress spinner, invoked once per JARDIN leaf computation.
+ * phase advances the text: "Planting" (0..24%), "Growing" (25..74%),
+ * "Blooming" (75..99%), "In bloom!" at completion (step == total).
+ * Safe to call from APDU handlers.
+ */
+void ui_jardin_garden_progress(uint32_t step, uint32_t total);
+
+/** Short "JARDIN ready" spinner shown when a pending slot finalizes. */
+void ui_jardin_slot_ready(void);

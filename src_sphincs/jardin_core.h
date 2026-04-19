@@ -37,17 +37,25 @@ typedef struct {
     uint8_t seed[JARDIN_N];
     uint8_t sk_seed[32];
 
-    uint8_t fors_pks[JARDIN_Q_MAX][JARDIN_N];                 /* 128 * 16 = 2048B */
-    uint8_t merkle_nodes[JARDIN_INTERNAL_NODES][JARDIN_N];    /* 127 * 16 = 2032B */
+    /* Storage is sized for the MAX tree; `n_leaves` and `merkle_h` record
+     * how much of the arrays the current slot actually uses. */
+    uint8_t fors_pks[JARDIN_Q_MAX][JARDIN_N];                       /* up to 128 * 16 */
+    uint8_t merkle_nodes[JARDIN_INTERNAL_NODES_MAX][JARDIN_N];      /* up to 127 * 16 */
 
-    uint32_t step;   /* 0..Q_MAX-1: which FORS PK to compute next */
+    uint8_t  merkle_h;   /* tree height for this slot (MIN..MAX) */
+    uint32_t n_leaves;   /* 1u << merkle_h (cached) */
+
+    uint32_t step;   /* 0..n_leaves-1: which FORS PK to compute next */
     uint32_t done;
 } jardin_keygen_state_t;
 
 /** Init keygen from master secret + random r.
- *  Derives sub_sk_seed and sub_pk_seed. Returns pk_seed immediately. */
+ *  Derives sub_sk_seed and sub_pk_seed. Returns pk_seed immediately.
+ *  merkle_h must be in [JARDIN_MERKLE_H_MIN, JARDIN_MERKLE_H_MAX]; the slot
+ *  will hold 2^merkle_h FORS+C leaves. */
 void jardin_keygen_init(const uint8_t master_sk_seed[32],
                         const uint8_t r[32],
+                        uint8_t merkle_h,
                         jardin_keygen_state_t *state,
                         uint8_t pk_seed_out[JARDIN_N]);
 
@@ -63,6 +71,41 @@ void jardin_keygen_finalize(jardin_keygen_state_t *state,
 /** Rebuild merkle_nodes from fors_pks (used on NVRAM restore).
  *  Assumes state->seed and state->fors_pks are already populated. */
 void jardin_rebuild_merkle_nodes(jardin_keygen_state_t *state);
+
+/* ================================================================
+ *  PENDING slot (Stage 2 background precompute).
+ *
+ *  Same math as the active path, but storage is compact: no
+ *  merkle_nodes buffer — the tree is built only at finalize, into an
+ *  external scratch buffer, so pending costs ~4KB less RAM per slot.
+ * ================================================================ */
+
+typedef struct {
+    uint8_t  seed[JARDIN_N];                            /* sub_pk_seed */
+    uint8_t  sk_seed[32];
+    uint8_t  fors_pks[JARDIN_Q_MAX][JARDIN_N];          /* up to 256 × 16 */
+    uint8_t  merkle_h;
+    uint32_t n_leaves;
+    uint32_t step;
+    uint32_t done;
+} jardin_pending_state_t;
+
+/** Init a pending slot. Same derivation as jardin_keygen_init. */
+void jardin_pending_init(const uint8_t master_sk_seed[32],
+                         const uint8_t r[32],
+                         uint8_t merkle_h,
+                         jardin_pending_state_t *state,
+                         uint8_t pk_seed_out[JARDIN_N]);
+
+/** Compute one FORS+C pk for the pending slot. */
+uint32_t jardin_pending_step(jardin_pending_state_t *state);
+
+/** Build the balanced Merkle tree and return the root. Uses `scratch`
+ *  as internal-node storage (caller provides at least
+ *  (2^merkle_h - 1) × JARDIN_N bytes). */
+void jardin_pending_finalize(jardin_pending_state_t *state,
+                             uint8_t (*scratch)[JARDIN_N],
+                             uint8_t pk_root_out[JARDIN_N]);
 
 /**
  * Sign a message with FORS+C at leaf q (1-indexed).

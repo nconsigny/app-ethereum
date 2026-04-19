@@ -12,7 +12,7 @@ Usage:
     python3 jardin_flow.py
 """
 
-import sys, os, time, struct, subprocess
+import sys, os, time, struct, subprocess, json
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "SPHINCs-", "SPHINCs-", "script"))
 
 from ledgerblue.comm import getDongle
@@ -24,11 +24,11 @@ from Crypto.Hash import keccak as _k
 # Config
 # ============================================================
 
-SPHINCS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "SPHINCs-", "SPHINCs-")
+SPHINCS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "SPHINCs-", "SPHINCs-")
 ENV_PATH = os.path.join(SPHINCS_DIR, ".env")
 
 C11_VERIFIER = "0xC25ef566884DC36649c3618EEDF66d715427Fd74"
-FORSC_VERIFIER = "0xbf30042d23FAc4377021567CCf8152e611A7F9db"
+FORSC_VERIFIER = "0xEa8A6D0260460c42d688109a8e2EfB43f8E158e3"
 ENTRYPOINT = "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
 CHAIN_ID = 11155111
 
@@ -116,12 +116,24 @@ def build_userop(sender, nonce, call_data="0x"):
         "signature": "0x",
     }
 
-def get_nonce(rpc, account):
+def get_nonce(rpc, account, expected_min=None, retries=10):
+    """Fetch EntryPoint nonce. If expected_min is set, poll until nonce >= expected_min."""
     sel = keccak(b"getNonce(address,uint192)")[:4]
     params = encode(["address","uint192"], [bytes.fromhex(account[2:]), 0])
-    r = subprocess.run(["cast","call","--rpc-url",rpc,ENTRYPOINT,"0x"+(sel+params).hex()],
-                       capture_output=True, text=True, timeout=30)
-    return int(r.stdout.strip(), 16) if r.stdout.strip() else 0
+    calldata = "0x" + (sel + params).hex()
+    import time
+    last = None
+    for _ in range(retries):
+        r = subprocess.run(["cast","call","--rpc-url",rpc,ENTRYPOINT,calldata],
+                           capture_output=True, text=True, timeout=30)
+        out = r.stdout.strip()
+        if not out:
+            raise RuntimeError(f"cast call getNonce failed: {r.stderr.strip()}")
+        last = int(out, 16)
+        if expected_min is None or last >= expected_min:
+            return last
+        time.sleep(2)
+    raise RuntimeError(f"nonce did not reach {expected_min} after {retries} polls (last={last})")
 
 def submit_handleops(rpc, privkey, user_op):
     acct = Account.from_key(bytes.fromhex(privkey))
@@ -313,10 +325,10 @@ def main():
     # C11 sign on Ledger
     c11_sig = ledger_c11_sign(dongle, user_op_hash)
 
-    # Pack Type 1: [0x01][ecdsa 65][r 32][subSeed 16][subRoot 16][c11_sig]
+    # Pack Type 1: [0x01][ecdsa 65][subSeed 16][subRoot 16][c11_sig]
     sub_seed_padded = sub_seed + b'\x00' * 16
     sub_root_padded = sub_root + b'\x00' * 16
-    type1_sig = (bytes([0x01]) + ecdsa_sig + r_bytes +
+    type1_sig = (bytes([0x01]) + ecdsa_sig +
                  sub_seed_padded[:16] + sub_root_padded[:16] + c11_sig)
     user_op["signature"] = "0x" + type1_sig.hex()
     print(f"  Type 1 sig: {len(type1_sig)} bytes")
@@ -324,9 +336,15 @@ def main():
     print("  Submitting Type 1...")
     submit_handleops(rpc, privkey, user_op)
 
+    # Persist state so a failed Type 2 can be retried without redoing Type 1.
+    state_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".jardin_state.json")
+    with open(state_path, "w") as f:
+        json.dump({"account": account, "sub_seed": sub_seed.hex(),
+                   "sub_root": sub_root.hex(), "q_next": 2}, f, indent=2)
+
     # ── Step 5: Type 2 UserOp — JARDÍN FORS+C compact ──
     print("\n=== Type 2: JARDÍN FORS+C Compact Sign ===")
-    nonce2 = get_nonce(rpc, account)
+    nonce2 = get_nonce(rpc, account, expected_min=nonce + 1)
     user_op2 = build_userop(account, nonce2, call_data)
     user_op_hash2 = compute_userop_hash(user_op2)
     print(f"  UserOp hash: 0x{user_op_hash2.hex()}")
@@ -338,8 +356,8 @@ def main():
     # JARDÍN FORS+C sign on Ledger — ~3 SECONDS!
     jardin_sig = ledger_jardin_sign(dongle, 1, user_op_hash2)
 
-    # Pack Type 2: [0x02][ecdsa 65][H(r) 32][subSeed 16][subRoot 16][forsc_sig]
-    type2_sig = (bytes([0x02]) + ecdsa_sig2 + h_r +
+    # Pack Type 2: [0x02][ecdsa 65][subSeed 16][subRoot 16][forsc_sig]
+    type2_sig = (bytes([0x02]) + ecdsa_sig2 +
                  sub_seed_padded[:16] + sub_root_padded[:16] + jardin_sig)
     user_op2["signature"] = "0x" + type2_sig.hex()
     print(f"  Type 2 sig: {len(type2_sig)} bytes")

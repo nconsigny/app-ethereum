@@ -161,24 +161,29 @@ static inline uint32_t merkle_offset(uint32_t level, uint32_t i) {
     return (1u << level) - 1u + i;
 }
 
-static void build_balanced_merkle(jardin_keygen_state_t *state) {
+/* Generic version: takes explicit inputs so pending finalize can reuse it
+ * with an external scratch buffer (e.g. mem_buffer). */
+static void build_balanced_merkle_into(
+        const uint8_t seed[JARDIN_N],
+        const uint8_t (*fors_pks)[JARDIN_N],
+        uint32_t h,
+        uint8_t (*merkle_nodes_out)[JARDIN_N]) {
     uint8_t adrs[32];
-    const uint8_t *seed = state->seed;
 
-    /* Build level h-1 from leaves (fors_pks). */
-    uint32_t level = JARDIN_MERKLE_H - 1;
+    /* Build level h-1 from leaves. */
+    uint32_t level = h - 1u;
     uint32_t n = 1u << level;
     uint32_t base = merkle_offset(level, 0);
     for (uint32_t i = 0; i < n; i++) {
         sphincs_make_adrs(adrs, 0, 0, JARDIN_ADRS_JARDIN_MERKLE, 0, 0, level, i);
         sphincs_th_pair(seed, adrs,
-                        state->fors_pks[2 * i],
-                        state->fors_pks[2 * i + 1],
-                        state->merkle_nodes[base + i]);
+                        fors_pks[2 * i],
+                        fors_pks[2 * i + 1],
+                        merkle_nodes_out[base + i]);
     }
 
-    /* Build upper levels from prior internal level. */
-    for (int lvl = (int)JARDIN_MERKLE_H - 2; lvl >= 0; lvl--) {
+    /* Build upper levels. */
+    for (int lvl = (int)h - 2; lvl >= 0; lvl--) {
         uint32_t cur_n = 1u << lvl;
         uint32_t cur_base = merkle_offset((uint32_t)lvl, 0);
         uint32_t child_base = merkle_offset((uint32_t)lvl + 1, 0);
@@ -186,11 +191,18 @@ static void build_balanced_merkle(jardin_keygen_state_t *state) {
             sphincs_make_adrs(adrs, 0, 0, JARDIN_ADRS_JARDIN_MERKLE, 0, 0,
                               (uint32_t)lvl, i);
             sphincs_th_pair(seed, adrs,
-                            state->merkle_nodes[child_base + 2 * i],
-                            state->merkle_nodes[child_base + 2 * i + 1],
-                            state->merkle_nodes[cur_base + i]);
+                            merkle_nodes_out[child_base + 2 * i],
+                            merkle_nodes_out[child_base + 2 * i + 1],
+                            merkle_nodes_out[cur_base + i]);
         }
     }
+}
+
+static void build_balanced_merkle(jardin_keygen_state_t *state) {
+    build_balanced_merkle_into(state->seed,
+                               (const uint8_t (*)[JARDIN_N])state->fors_pks,
+                               state->merkle_h,
+                               state->merkle_nodes);
 }
 
 /* ================================================================
@@ -199,9 +211,17 @@ static void build_balanced_merkle(jardin_keygen_state_t *state) {
 
 void jardin_keygen_init(const uint8_t master_sk_seed[32],
                         const uint8_t r[32],
+                        uint8_t merkle_h,
                         jardin_keygen_state_t *state,
                         uint8_t pk_seed_out[JARDIN_N]) {
     memset(state, 0, sizeof(*state));
+    /* Clamp to supported range — caller is the APDU handler which already
+     * validates, but be defensive anyway. */
+    if (merkle_h < JARDIN_MERKLE_H_MIN) merkle_h = JARDIN_MERKLE_H_MIN;
+    if (merkle_h > JARDIN_MERKLE_H_MAX) merkle_h = JARDIN_MERKLE_H_MAX;
+    state->merkle_h = merkle_h;
+    state->n_leaves = 1u << merkle_h;
+
     jardin_derive_sub_keys(master_sk_seed, r, state->seed, state->sk_seed);
     sphincs_set_seed(state->seed);
     memcpy(pk_seed_out, state->seed, JARDIN_N);
@@ -210,13 +230,13 @@ void jardin_keygen_init(const uint8_t master_sk_seed[32],
 }
 
 uint32_t jardin_keygen_step(jardin_keygen_state_t *state) {
-    if (state->done) return JARDIN_Q_MAX;
+    if (state->done) return state->n_leaves;
 
     uint32_t q = state->step + 1; /* q is 1-indexed */
     compute_jardin_fors_pk(state->seed, state->sk_seed, q, state->fors_pks[state->step]);
 
     state->step++;
-    if (state->step >= JARDIN_Q_MAX) {
+    if (state->step >= state->n_leaves) {
         state->done = 1;
     }
     return state->step - 1;
@@ -352,15 +372,17 @@ bool jardin_fors_sign(const jardin_secret_key_t *sk,
         memcpy(sig_out + off, root, JARDIN_N); off += JARDIN_N;
     }
 
-    /* Trailing: q (1B) + balanced-tree auth path (7 × 16B = 112B) */
+    /* Trailing: q (1B) + balanced-tree auth path (h × 16B). h is per-slot;
+     * the verifier infers it from total sig length. */
+    const uint32_t h = state->merkle_h;
     sig_out[off++] = (uint8_t)(q & 0xFF);
 
     uint32_t leaf_idx = q - 1;
     /* auth[0] — sibling leaf in fors_pks */
     memcpy(sig_out + off, state->fors_pks[leaf_idx ^ 1], JARDIN_N); off += JARDIN_N;
     /* auth[1..h-1] — siblings in merkle_nodes */
-    for (uint32_t j = 1; j < JARDIN_MERKLE_H; j++) {
-        uint32_t sibling_level = JARDIN_MERKLE_H - j;       /* 6..1 */
+    for (uint32_t j = 1; j < h; j++) {
+        uint32_t sibling_level = h - j;
         uint32_t sibling_idx = (leaf_idx >> j) ^ 1u;
         uint32_t off_in = merkle_offset(sibling_level, sibling_idx);
         memcpy(sig_out + off, state->merkle_nodes[off_in], JARDIN_N);
@@ -369,4 +391,53 @@ bool jardin_fors_sign(const jardin_secret_key_t *sk,
 
     *sig_len = (uint32_t)off;
     return true;
+}
+
+/* ================================================================
+ *  PENDING slot (Stage 2 background precompute)
+ * ================================================================ */
+
+void jardin_pending_init(const uint8_t master_sk_seed[32],
+                         const uint8_t r[32],
+                         uint8_t merkle_h,
+                         jardin_pending_state_t *state,
+                         uint8_t pk_seed_out[JARDIN_N]) {
+    if (merkle_h < JARDIN_MERKLE_H_MIN) merkle_h = JARDIN_MERKLE_H_MIN;
+    if (merkle_h > JARDIN_MERKLE_H_MAX) merkle_h = JARDIN_MERKLE_H_MAX;
+
+    memset(state, 0, sizeof(*state));
+    state->merkle_h = merkle_h;
+    state->n_leaves = 1u << merkle_h;
+
+    jardin_derive_sub_keys(master_sk_seed, r, state->seed, state->sk_seed);
+    sphincs_set_seed(state->seed);
+    memcpy(pk_seed_out, state->seed, JARDIN_N);
+    state->step = 0;
+    state->done = 0;
+}
+
+uint32_t jardin_pending_step(jardin_pending_state_t *state) {
+    if (state->done) return state->n_leaves;
+
+    uint32_t q = state->step + 1; /* q is 1-indexed */
+    compute_jardin_fors_pk(state->seed, state->sk_seed, q,
+                           state->fors_pks[state->step]);
+
+    state->step++;
+    if (state->step >= state->n_leaves) {
+        state->done = 1;
+    }
+    return state->step - 1;
+}
+
+void jardin_pending_finalize(jardin_pending_state_t *state,
+                             uint8_t (*scratch)[JARDIN_N],
+                             uint8_t pk_root_out[JARDIN_N]) {
+    /* Make sure the seed cache is for this pending slot before Merkle hashing. */
+    sphincs_set_seed(state->seed);
+    build_balanced_merkle_into(state->seed,
+                               (const uint8_t (*)[JARDIN_N])state->fors_pks,
+                               state->merkle_h,
+                               scratch);
+    memcpy(pk_root_out, scratch[0], JARDIN_N);
 }

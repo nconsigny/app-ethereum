@@ -135,7 +135,7 @@ When a signature fails on-chain:
 | Contract | Address |
 |----------|---------|
 | C11 Verifier | `0xC25ef566884DC36649c3618EEDF66d715427Fd74` |
-| JARDÍN FORS+C Verifier | `0xbf30042d23FAc4377021567CCf8152e611A7F9db` |
+| JARDÍN FORS+C Verifier (balanced h=7) | `0xEa8A6D0260460c42d688109a8e2EfB43f8E158e3` |
 | JARDÍN Account Factory | `0xa6A947A3A878EAF742179884c996cFE80cD8F5F9` |
 | EntryPoint v0.9 | `0x433709009B8330FDa32311DF1C2AFA402eD8D009` |
 | JardinAccount (test) | `0x0af0094a178Cef6AD74b3Da2B516BDc55e24acc9` |

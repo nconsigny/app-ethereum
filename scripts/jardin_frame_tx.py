@@ -29,9 +29,9 @@ FRAME_TX_TYPE = 0x06
 MODE_VERIFY = 1
 MODE_SENDER = 2
 
-C11_VERIFIER = "0x3C15538ED063e688c8DF3d571Cb7a0062d2fB18D"
-FORSC_VERIFIER = "0xccf1769D8713099172642EB55DDFFC0c5A444FE9"
-ACCOUNT = "0x3904b8f5b0F49cD206b7d5AABeE5D1F37eE15D8d"
+C11_VERIFIER = "0x3155755b79aA083bd953911C92705B7aA82a18F9"
+FORSC_VERIFIER = "0x4eaB29997D332A666c3C366217Ab177cF9A7C436"
+ACCOUNT = "0x8E45C0936fa1a65bDaD3222bEFeC6a03C83372cE"
 DEV_KEY = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
 CLA = 0xE0
@@ -77,6 +77,32 @@ def _rlp_length_prefix(data, offset):
 def rlp_encode_address(addr_hex):
     addr = bytes.fromhex(addr_hex.replace('0x', ''))
     return rlp_encode_bytes(addr)
+
+# ============================================================
+# VERIFY / SENDER frame encoders (JardinFrameAccount ABI)
+# ============================================================
+
+def encode_verify_data(sig_hash_bytes, jardin_sig):
+    """VERIFY frame input: sigHash(32) || raw_jardin_sig. Raw concatenation."""
+    return sig_hash_bytes + jardin_sig
+
+def encode_register_slot(sub_seed_16, sub_root_16):
+    """registerSlot(bytes16 subSeed, bytes16 subRoot) calldata."""
+    sel = keccak_bytes(b"registerSlot(bytes16,bytes16)")[:4]
+    return (sel +
+            sub_seed_16.ljust(32, b'\x00') +
+            sub_root_16.ljust(32, b'\x00'))
+
+def encode_execute(to_addr, value_wei, inner_data):
+    """execute(address dest, uint256 value, bytes data) calldata."""
+    sel = keccak_bytes(b"execute(address,uint256,bytes)")[:4]
+    to = bytes.fromhex(to_addr.replace("0x", "")).rjust(32, b'\x00')
+    # Dynamic bytes: offset to data = 0x60, length, padded data
+    data_len = len(inner_data).to_bytes(32, "big")
+    pad = (32 - (len(inner_data) % 32)) % 32
+    data_padded = inner_data + b'\x00' * pad
+    return (sel + to + value_wei.to_bytes(32, "big") + (0x60).to_bytes(32, "big") +
+            data_len + data_padded)
 
 # ============================================================
 # Frame tx builder
@@ -177,36 +203,49 @@ def ledger_jardin_sign(dongle, q, sig_hash_bytes):
 # ============================================================
 
 def cmd_register(dongle):
-    """Type 1: C11 master sign + register JARDÍN slot on ethrex frame account."""
-    print("\n=== C11 Master Keygen ===")
-    pk_seed, pk_root = ledger_c11_keygen(dongle)
-    print(f"  pk_root: {pk_root.hex()}")
+    """Type 1 frame tx: C11 master sign + register existing NVRAM slot on ethrex.
+    Reuses the subkey already in the Ledger's NVRAM (same slot as on Sepolia),
+    so no fresh JARDÍN keygen is needed."""
+    # Load NVRAM into RAM — populates both jardin_sk/pk AND C11 sphincs_sk/pk.
+    # Without this, handleSphincsSign P1=0 refuses with 6985 because
+    # sphincs_pk.pk_seed[0] == 0 (sphincs_apdu.c:247).
+    resp = send(dongle, 0x44, p1=0x04)
+    print("  NVRAM loaded into RAM")
 
-    print("\n=== JARDÍN Sub-Key Keygen ===")
-    r_bytes = os.urandom(32)
-    sub_seed, sub_root = ledger_jardin_keygen(dongle, r_bytes)
-    print(f"  subPkRoot: {sub_root.hex()}")
-    h_r = keccak_bytes(r_bytes)
+    resp = send(dongle, 0x44, p1=0x05)
+    if resp[0] != 1:
+        print("Device NVRAM not initialised — run `jardin_flow.py` first to create a slot.")
+        sys.exit(1)
+    device_q = resp[1]
+    sub_seed = bytes(resp[2:18])
+    sub_root = bytes(resp[18:34])
+    print(f"  subSeed: {sub_seed.hex()}")
+    print(f"  subRoot: {sub_root.hex()}")
+    print(f"  device q (next): {device_q}")
 
     nonce = get_nonce(ACCOUNT)
+    # sig_hash: VERIFY data is elided (empty), SENDER data is the registerSlot call
+    sender_data = encode_register_slot(sub_seed, sub_root)
     frames_for_hash = [
         (MODE_VERIFY, ACCOUNT, 500_000, b''),
-        (MODE_SENDER, ACCOUNT, 50_000, b'')]
+        (MODE_SENDER, ACCOUNT, 100_000, sender_data)]
     tx_payload = build_frame_tx(CHAIN_ID, nonce, ACCOUNT, frames_for_hash)
     sig_hash = compute_sig_hash(tx_payload)
     sig_hash_bytes = sig_hash.to_bytes(32, "big")
     print(f"\n  Sig hash: 0x{sig_hash:064x}")
 
-    print("\n=== C11 Signing ===")
+    print("\n=== C11 Signing (~390 s) ===")
     c11_sig = ledger_c11_sign(dongle, sig_hash_bytes)
 
-    # Type 1 frame data: [0x01][r 32][subSeed 16][subRoot 16][c11_sig]
-    verify_data = bytes([0x01]) + r_bytes + sub_seed + sub_root + c11_sig
-    print(f"  Type 1 verify data: {len(verify_data)} bytes")
+    # Raw jardin sig (balanced Type 1): [0x01][subSeed 16][subRoot 16][c11_sig]
+    raw_jardin_sig = bytes([0x01]) + sub_seed + sub_root + c11_sig
+    verify_data = encode_verify_data(sig_hash_bytes, raw_jardin_sig)
+    print(f"  Type 1 verify data: {len(verify_data)} bytes (sigHash + {len(raw_jardin_sig)} raw sig)")
+    print(f"  Sender registerSlot data: {len(sender_data)} bytes")
 
     frames_final = [
         (MODE_VERIFY, ACCOUNT, 500_000, verify_data),
-        (MODE_SENDER, ACCOUNT, 50_000, b'')]
+        (MODE_SENDER, ACCOUNT, 100_000, sender_data)]
     final_payload = build_frame_tx(CHAIN_ID, nonce, ACCOUNT, frames_final)
     raw_tx = bytes([FRAME_TX_TYPE]) + final_payload
     print(f"  Raw tx: {len(raw_tx)} bytes")
@@ -221,59 +260,45 @@ def cmd_register(dongle):
             print(f"  Status: {receipt.get('status')}")
             if 'frameReceipts' in receipt:
                 for i, fr in enumerate(receipt['frameReceipts']):
-                    print(f"  Frame {i}: {fr.get('status')}")
-
-    # Save state
-    import json
-    state = {"r": r_bytes.hex(), "sub_seed": sub_seed.hex(), "sub_root": sub_root.hex(),
-             "h_r": h_r.hex(), "q": 1}
-    with open(os.path.join(os.path.dirname(__file__), ".jardin_frame_state.json"), "w") as f:
-        json.dump(state, f, indent=2)
-    print("  State saved to .jardin_frame_state.json")
+                    print(f"  Frame {i}: {fr.get('status')} gas={int(fr.get('gasUsed','0x0'),16)}")
 
 def cmd_send(dongle):
-    """Type 2: JARDÍN FORS+C compact frame tx on ethrex — ~3 seconds!"""
-    import json
-    state_path = os.path.join(os.path.dirname(__file__), ".jardin_frame_state.json")
-    if not os.path.exists(state_path):
-        print("No state file. Run 'register' first.")
-        sys.exit(1)
-    with open(state_path) as f:
-        state = json.load(f)
-
-    h_r = bytes.fromhex(state["h_r"])
-    sub_seed = bytes.fromhex(state["sub_seed"])
-    sub_root = bytes.fromhex(state["sub_root"])
-    q = state.get("q", 1)
-
-    # Restore NVRAM on device
-    try:
-        send(dongle, 0x44, p1=0x04, timeout=5)
-        print("  NVRAM restore OK")
-    except:
-        print("  NVRAM restore failed — need to run keygen first")
-        sys.exit(1)
+    """Type 2 frame tx: JARDÍN FORS+C compact — ~3 seconds. Reads slot identity
+    and current q from the device's NVRAM (no local state file needed)."""
+    send(dongle, 0x44, p1=0x04)  # LOAD_NVRAM — ensure jardin_key_ready
+    resp = send(dongle, 0x44, p1=0x05)
+    if resp[0] != 1:
+        print("Device NVRAM not initialised."); sys.exit(1)
+    q = resp[1]
+    sub_seed = bytes(resp[2:18])
+    sub_root = bytes(resp[18:34])
+    print(f"  subSeed: {sub_seed.hex()}")
+    print(f"  subRoot: {sub_root.hex()}")
+    print(f"  q: {q}")
 
     nonce = get_nonce(ACCOUNT)
+    # SENDER frame: self-call execute(dev_key_addr, 0, ""), a no-op that proves the
+    # account can do arbitrary calls in SENDER mode. Empty data also works.
+    dev_addr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    sender_data = encode_execute(dev_addr, 0, b"")
     frames_for_hash = [
         (MODE_VERIFY, ACCOUNT, 500_000, b''),
-        (MODE_SENDER, ACCOUNT, 50_000, b'')]
+        (MODE_SENDER, ACCOUNT, 100_000, sender_data)]
     tx_payload = build_frame_tx(CHAIN_ID, nonce, ACCOUNT, frames_for_hash)
     sig_hash = compute_sig_hash(tx_payload)
     sig_hash_bytes = sig_hash.to_bytes(32, "big")
     print(f"  Sig hash: 0x{sig_hash:064x}")
-    print(f"  q = {q}")
 
-    # JARDÍN sign — 3 SECONDS!
     jardin_sig = ledger_jardin_sign(dongle, q, sig_hash_bytes)
 
-    # Type 2 frame data: [0x02][H(r) 32][subSeed 16][subRoot 16][forsc_sig]
-    verify_data = bytes([0x02]) + h_r + sub_seed + sub_root + jardin_sig
-    print(f"  Type 2 verify data: {len(verify_data)} bytes")
+    # Raw jardin sig (balanced Type 2): [0x02][subSeed 16][subRoot 16][forsc_sig 2565]
+    raw_jardin_sig = bytes([0x02]) + sub_seed + sub_root + jardin_sig
+    verify_data = encode_verify_data(sig_hash_bytes, raw_jardin_sig)
+    print(f"  Type 2 verify data: {len(verify_data)} bytes (sigHash + {len(raw_jardin_sig)} raw sig)")
 
     frames_final = [
         (MODE_VERIFY, ACCOUNT, 500_000, verify_data),
-        (MODE_SENDER, ACCOUNT, 50_000, b'')]
+        (MODE_SENDER, ACCOUNT, 100_000, sender_data)]
     final_payload = build_frame_tx(CHAIN_ID, nonce, ACCOUNT, frames_final)
     raw_tx = bytes([FRAME_TX_TYPE]) + final_payload
     print(f"  Raw tx: {len(raw_tx)} bytes")
@@ -289,12 +314,6 @@ def cmd_send(dongle):
             if 'frameReceipts' in receipt:
                 for i, fr in enumerate(receipt['frameReceipts']):
                     print(f"  Frame {i}: status={fr.get('status')} gas={int(fr.get('gasUsed','0x0'),16)}")
-
-    # Increment q
-    state["q"] = q + 1
-    with open(state_path, "w") as f:
-        json.dump(state, f, indent=2)
-    print(f"  Next q: {q+1}")
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in ("register", "send"):

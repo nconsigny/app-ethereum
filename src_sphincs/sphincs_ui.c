@@ -28,6 +28,7 @@ extern uint16_t sphincs_sig_offset;
 extern bool sphincs_sig_pending;
 extern bool sign_approved;
 extern bool jardin_sign_approved;
+extern bool t0_sign_approved;
 
 /* Display buffers */
 static char pk_seed_hex[35];
@@ -264,8 +265,99 @@ void ui_jardin_confirm_sign(const uint8_t msg_hash[32], uint8_t q) {
     nbgl_useCaseReview(TYPE_TRANSACTION,
                        &pairsList,
                        get_app_icon(false),
-                       "Review JARDIN\nsignature",
+                       "Review JARDIN\ntransaction",
                        NULL,
-                       "Sign with JARDIN?",
+                       "Sign transaction?",
                        jardin_sign_review_cb);
+}
+
+/* ================================================================
+ * JARDINERO T0 Signing Confirmation
+ * ================================================================ */
+
+static void t0_sign_review_cb(bool confirm) {
+    if (confirm) {
+        t0_sign_approved = true;
+        io_seproxyhal_send_status(APDU_RESPONSE_OK, 0, false, false);
+    } else {
+        t0_sign_approved = false;
+        io_seproxyhal_send_status(APDU_RESPONSE_CONDITION_NOT_SATISFIED, 0, true, false);
+        nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_REJECTED, ui_idle);
+    }
+}
+
+/* ================================================================
+ *  Garden-themed progress spinner for JARDIN (active + pending) keygen.
+ *
+ *  Picks the label from the progress fraction:
+ *     phase 1 ( 0% ..  24%): "Planting JARDIN N/T"
+ *     phase 2 (25% ..  74%): "Growing JARDIN N/T"
+ *     phase 3 (75% ..  99%): "Blooming JARDIN N/T"
+ *     done  ( 100%        ): "JARDIN in bloom!"
+ * ================================================================ */
+
+static char garden_text[48];
+
+void ui_jardin_garden_progress(uint32_t step, uint32_t total) {
+    if (total == 0) return;
+
+    if (step >= total) {
+        strcpy(garden_text, "JARDIN in bloom!");
+        nbgl_useCaseSpinner(garden_text);
+        io_seproxyhal_io_heartbeat();
+        return;
+    }
+
+    /* Pick verb by quartile. */
+    const char *verb;
+    uint32_t pct = (step * 100u) / total;
+    if (pct < 25)      verb = "Planting";
+    else if (pct < 75) verb = "Growing";
+    else               verb = "Blooming";
+
+    char step_str[12], total_str[12];
+    uint_to_str(step, step_str);
+    uint_to_str(total, total_str);
+
+    /* "Planting JARDIN 12/64" */
+    strcpy(garden_text, verb);
+    strcat(garden_text, " JARDIN ");
+    strcat(garden_text, step_str);
+    strcat(garden_text, "/");
+    strcat(garden_text, total_str);
+
+    nbgl_useCaseSpinner(garden_text);
+    io_seproxyhal_io_heartbeat();
+}
+
+void ui_jardin_slot_ready(void) {
+    strcpy(garden_text, "JARDIN slot ready");
+    nbgl_useCaseSpinner(garden_text);
+    io_seproxyhal_io_heartbeat();
+}
+
+void ui_t0_confirm_sign(const uint8_t msg_hash[32]) {
+    memcpy(pending_msg_hash, msg_hash, 32);
+
+    sphincs_to_hex(msg_hash, 32, msg_hash_hex);
+
+    static nbgl_contentTagValue_t pairs[1];
+    static nbgl_contentTagValueList_t pairsList;
+
+    pairs[0].item = "Message hash";
+    pairs[0].value = msg_hash_hex;
+
+    pairsList.nbPairs = 1;
+    pairsList.pairs = pairs;
+    pairsList.smallCaseForValue = false;
+    pairsList.nbMaxLinesForValue = 0;
+    pairsList.wrapping = false;
+
+    nbgl_useCaseReview(TYPE_TRANSACTION,
+                       &pairsList,
+                       get_app_icon(false),
+                       "Review JARDIN\nregistration",
+                       NULL,
+                       "Sign registration?",
+                       t0_sign_review_cb);
 }

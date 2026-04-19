@@ -15,12 +15,22 @@
 #define INS_JARDIN_KEYGEN   0x44
 #define INS_JARDIN_SIGN     0x46
 
-/* P1 for keygen */
-#define P1_JARDIN_KEYGEN_INIT    0x00
+/* P1 for keygen (ACTIVE slot) */
+#define P1_JARDIN_KEYGEN_INIT    0x00  /* init using C11 master (legacy) */
 #define P1_JARDIN_KEYGEN_STEP    0x02
 #define P1_JARDIN_KEYGEN_FINAL   0x03
 #define P1_JARDIN_LOAD_NVRAM     0x04  /* load saved slot from NVRAM */
 #define P1_JARDIN_GET_STATE      0x05  /* return r, sub_seed, sub_root, q */
+#define P1_JARDIN_KEYGEN_INIT_T0 0x06  /* init using T0 NVRAM as master (JARDINERO) */
+
+/* P1 for PENDING slot (background precompute; JARDINERO Stage 2). */
+#define P1_JARDIN_PENDING_INIT   0x07  /* data = [h 1B][r 32B], returns subSeed */
+#define P1_JARDIN_PENDING_STEP   0x08  /* compute 1 leaf, persist to NVRAM */
+#define P1_JARDIN_PENDING_FINAL  0x09  /* build merkle root, finalize pending  */
+#define P1_JARDIN_PROMOTE        0x0A  /* pending -> active + wipe old active  */
+#define P1_JARDIN_PENDING_STATE  0x0B  /* read pending progress + pk fields    */
+#define P1_JARDIN_PENDING_LOAD   0x0C  /* restore pending RAM state from NVRAM */
+#define P1_JARDIN_UI_IDLE        0x0D  /* drop back to home screen (end-of-batch) */
 
 uint16_t handleJardinKeygen(uint8_t p1, uint8_t p2,
                              const uint8_t *data, uint8_t length,
