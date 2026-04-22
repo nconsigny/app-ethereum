@@ -2,7 +2,7 @@
 #include "caller_api.h"
 #include "network.h"
 #include "cmd_get_tx_simulation.h"
-#include "jardin_apdu.h"  /* jardin_grow_garden_batch() */
+#include "jardin_apdu.h"  /* jardin_grow_garden_batch() + GROW_GARDEN_BATCH_DEFAULT */
 
 // Global Warning struct for NBGL review flows
 nbgl_warning_t warning;
@@ -222,10 +222,10 @@ static void prepare_and_display_home(const char *appname, const char *tagline, u
     infoList.infoTypes = infoTypes;
     infoList.infoContents = infoContents;
 
-    /* "Grow the garden" home-screen action button — runs the pending-slot
-     * precompute directly on-device, no host needed. Each tap grows a
-     * bounded batch of leaves (~16 × ~3s ≈ 1 min). Re-tap to continue
-     * until the spinner shows "JARDIN in bloom!". */
+    /* "Grow the garden" home-screen action button — advances the pending
+     * slot's precompute directly on-device, no host needed. Each tap grows
+     * up to GROW_GARDEN_BATCH_DEFAULT (=2) leaves (~1-2 s). Re-tap until
+     * the spinner shows "JARDIN in bloom!" (slot finalized in NVRAM). */
     static const nbgl_homeAction_t jardin_grow_action = {
         .text     = "Grow the garden",
         .icon     = NULL,
@@ -266,16 +266,12 @@ static void get_appname_and_tagline(const char **appname, const char **tagline) 
 
 /**
  * Home-screen "Grow the garden" action.
- * Advances the pending slot's precompute by a bounded batch. After
- * each call the home screen is re-displayed so the user can tap again
- * (or walk away). If the slot finishes, pending_ready == FINAL and
- * the host can then register+promote.
+ * Advances the pending slot by a bounded batch, then repaints home so the
+ * user can tap again (or walk away). The spinner inside
+ * jardin_grow_garden_batch() shows progress while it runs.
  */
 void ui_jardin_grow_action(void) {
-    uint32_t rc = jardin_grow_garden_batch(GROW_GARDEN_BATCH_DEFAULT);
-    (void)rc;
-    /* Whatever happened, return to home. The spinner inside the grow
-     * function showed progress; here we just repaint the idle screen. */
+    (void)jardin_grow_garden_batch(GROW_GARDEN_BATCH_DEFAULT);
     ui_idle();
 }
 

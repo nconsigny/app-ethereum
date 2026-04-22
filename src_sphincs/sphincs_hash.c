@@ -1,8 +1,8 @@
 /**
- * SPHINCS+ C11 Hash Primitives — keccak256-based
+ * JARDÍN Hash Primitives — keccak256-based, 32-byte ADRS
  *
- * Uses Ledger CX API when available (HAVE_LEDGER_CX),
- * falls back to tiny_keccak for host-side testing.
+ * Matches script/jardin_primitives.py byte-for-byte. Shared by plain-SPX
+ * (stateless path) and plain-FORS (compact path).
  */
 
 #include "sphincs_hash.h"
@@ -179,16 +179,20 @@ void sphincs_th_multi(const uint8_t seed[SPHINCS_N],
 
 void sphincs_h_msg(const uint8_t seed[SPHINCS_N],
                    const uint8_t root[SPHINCS_N],
-                   const uint8_t R[SPHINCS_N],
+                   const uint8_t R[32],
                    const uint8_t message[32],
+                   uint8_t domain_byte,
                    uint8_t digest[32]) {
     uint8_t buf[160]; /* seed(32) + root(32) + R(32) + message(32) + domain(32) */
 
     pad_n_to_32(buf, seed);
     pad_n_to_32(buf + 32, root);
-    pad_n_to_32(buf + 64, R);
+    memcpy(buf + 64, R, 32);               /* R is already full 32 bytes */
     memcpy(buf + 96, message, 32);
-    memset(buf + 128, HMSG_DOMAIN_BYTE, 32);  /* 0xFF...FF domain separator */
+    /* Domain word: 31 bytes 0xFF + one trailing scheme byte (C11=0xFF, T0=0xFE,
+     * plain-FORS=0xFD, plain-SPX=0xFC). See script/jardin_primitives.py. */
+    memset(buf + 128, 0xFF, 31);
+    buf[159] = domain_byte;
 
     sphincs_keccak256(buf, 160, digest);
 }

@@ -1,5 +1,7 @@
 /**
- * SPHINCS+ C11 UI — NBGL confirmation screens with progress spinner
+ * JARDÍN / SPHINCS+ NBGL confirmation screens
+ *
+ * Shared between plain SPHINCS+ (stateless) and plain FORS (compact).
  */
 
 #include "sphincs_ui.h"
@@ -18,17 +20,14 @@
 #include <stdio.h>
 
 extern uint8_t G_io_apdu_buffer[];
-extern void io_seproxyhal_io_heartbeat(void);
 
-/* State from sphincs_apdu.c */
+/* State from sphincs_apdu.c (plain SPX) */
 extern sphincs_public_key_t sphincs_pk;
 extern sphincs_secret_key_t sphincs_sk;
-extern uint8_t *sphincs_sig_buf;
-extern uint16_t sphincs_sig_offset;
-extern bool sphincs_sig_pending;
-extern bool sign_approved;
+extern bool sphincs_sign_approved;
+
+/* State from jardin_apdu.c (plain FORS) */
 extern bool jardin_sign_approved;
-extern bool t0_sign_approved;
 
 /* Display buffers */
 static char pk_seed_hex[35];
@@ -36,9 +35,6 @@ static char pk_root_hex[35];
 static char msg_hash_hex[67];
 static char q_str[12];
 static uint8_t pending_msg_hash[32];
-
-/* Progress spinner text buffer */
-static char progress_text[64];
 
 /* Hex conversion */
 static void sphincs_to_hex(const uint8_t *bytes, size_t len, char *out) {
@@ -51,7 +47,6 @@ static void sphincs_to_hex(const uint8_t *bytes, size_t len, char *out) {
     out[2 + len*2] = '\0';
 }
 
-/* Simple integer-to-string (no sprintf on all targets) */
 static void uint_to_str(uint32_t val, char *out) {
     char tmp[12];
     int i = 0;
@@ -67,79 +62,13 @@ static void uint_to_str(uint32_t val, char *out) {
 }
 
 /* ================================================================
- * Progress callback — updates spinner screen + keeps USB alive
- * ================================================================ */
-
-static void signing_progress_cb(sphincs_phase_t phase, uint32_t step, uint32_t total) {
-    char step_str[12], total_str[12];
-
-    switch (phase) {
-        case SPHINCS_PHASE_KEYGEN_WOTS:
-            uint_to_str(step, step_str);
-            uint_to_str(total, total_str);
-            /* "Keygen: leaf 32/256" */
-            strcpy(progress_text, "Keygen: leaf ");
-            strcat(progress_text, step_str);
-            strcat(progress_text, "/");
-            strcat(progress_text, total_str);
-            break;
-
-        case SPHINCS_PHASE_R_GRINDING:
-            strcpy(progress_text, "Grinding R nonce...");
-            break;
-
-        case SPHINCS_PHASE_FORS_TREE:
-            uint_to_str(step + 1, step_str);
-            uint_to_str(total, total_str);
-            /* "FORS tree 3/13" */
-            strcpy(progress_text, "FORS tree ");
-            strcat(progress_text, step_str);
-            strcat(progress_text, "/");
-            strcat(progress_text, total_str);
-            break;
-
-        case SPHINCS_PHASE_HT_LAYER_SIGN:
-            uint_to_str(step + 1, step_str);
-            uint_to_str(total, total_str);
-            strcpy(progress_text, "WOTS sign layer ");
-            strcat(progress_text, step_str);
-            strcat(progress_text, "/");
-            strcat(progress_text, total_str);
-            break;
-
-        case SPHINCS_PHASE_HT_LAYER_BUILD:
-            uint_to_str(step + 1, step_str);
-            uint_to_str(total, total_str);
-            strcpy(progress_text, "Merkle tree ");
-            strcat(progress_text, step_str);
-            strcat(progress_text, "/");
-            strcat(progress_text, total_str);
-            break;
-
-        case SPHINCS_PHASE_DONE:
-            strcpy(progress_text, "Signing complete!");
-            break;
-
-        default:
-            strcpy(progress_text, "Processing...");
-            break;
-    }
-
-    /* Update the spinner screen text */
-    nbgl_useCaseSpinner(progress_text);
-
-    /* Keep USB communication alive — prevents timeout during long operations */
-    io_seproxyhal_io_heartbeat();
-}
-
-/* ================================================================
- * Public Key Confirmation
+ * SPHINCS+ Public Key Confirmation
  * ================================================================ */
 
 static void pubkey_review_cb(bool confirm) {
     if (confirm) {
-        memcpy(G_io_apdu_buffer, sphincs_pk.pk_seed, SPHINCS_N);
-        memcpy(G_io_apdu_buffer + SPHINCS_N, sphincs_pk.pk_root, SPHINCS_N);
+        memcpy(G_io_apdu_buffer, sphincs_pk.pk_seed, SPHINCS_PK_SEED_SIZE);
+        memcpy(G_io_apdu_buffer + SPHINCS_PK_SEED_SIZE, sphincs_pk.pk_root, SPHINCS_PK_ROOT_SIZE);
         io_seproxyhal_send_status(APDU_RESPONSE_OK, SPHINCS_PK_SIZE, true, false);
         nbgl_useCaseReviewStatus(STATUS_TYPE_ADDRESS_VERIFIED, ui_idle);
     } else {
@@ -149,8 +78,8 @@ static void pubkey_review_cb(bool confirm) {
 }
 
 void ui_sphincs_confirm_pubkey(void) {
-    sphincs_to_hex(sphincs_pk.pk_seed, SPHINCS_N, pk_seed_hex);
-    sphincs_to_hex(sphincs_pk.pk_root, SPHINCS_N, pk_root_hex);
+    sphincs_to_hex(sphincs_pk.pk_seed, SPHINCS_PK_SEED_SIZE, pk_seed_hex);
+    sphincs_to_hex(sphincs_pk.pk_root, SPHINCS_PK_ROOT_SIZE, pk_root_hex);
 
     static nbgl_contentTagValue_t pairs[2];
     static nbgl_contentTagValueList_t pairsList;
@@ -176,18 +105,18 @@ void ui_sphincs_confirm_pubkey(void) {
 }
 
 /* ================================================================
- * Signing Confirmation + Progress
+ * SPHINCS+ Sign Confirmation
  * ================================================================ */
 
-static void sign_review_cb(bool confirm) {
+static void sphincs_sign_review_cb(bool confirm) {
     if (confirm) {
-        /* Just approve — actual signing happens via chunked P1=0x04 APDUs from host.
-         * Do NOT show nbgl_useCaseReviewStatus here — its animation blocks the
-         * event loop and crashes when the next APDU arrives. */
-        sign_approved = true;
+        /* Approve and hand control back to host; actual signing happens
+         * across chunked P1=0x04 APDUs. Do NOT call nbgl_useCaseReviewStatus
+         * here — its animation blocks the event loop and crashes the next APDU. */
+        sphincs_sign_approved = true;
         io_seproxyhal_send_status(APDU_RESPONSE_OK, 0, false, false);
     } else {
-        sign_approved = false;
+        sphincs_sign_approved = false;
         io_seproxyhal_send_status(APDU_RESPONSE_CONDITION_NOT_SATISFIED, 0, true, false);
         nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_REJECTED, ui_idle);
     }
@@ -197,7 +126,7 @@ void ui_sphincs_confirm_sign(const uint8_t msg_hash[32]) {
     memcpy(pending_msg_hash, msg_hash, 32);
 
     sphincs_to_hex(msg_hash, 32, msg_hash_hex);
-    sphincs_to_hex(sphincs_pk.pk_seed, SPHINCS_N, pk_seed_hex);
+    sphincs_to_hex(sphincs_pk.pk_seed, SPHINCS_PK_SEED_SIZE, pk_seed_hex);
 
     static nbgl_contentTagValue_t pairs[2];
     static nbgl_contentTagValueList_t pairsList;
@@ -216,14 +145,14 @@ void ui_sphincs_confirm_sign(const uint8_t msg_hash[32]) {
     nbgl_useCaseReview(TYPE_TRANSACTION,
                        &pairsList,
                        get_app_icon(false),
-                       "Review SPHINCS-\nsignature",
+                       "Review SPHINCS+\nsignature",
                        NULL,
-                       "Sign with SPHINCS-?",
-                       sign_review_cb);
+                       "Sign with SPHINCS+?",
+                       sphincs_sign_review_cb);
 }
 
 /* ================================================================
- * JARDÍN FORS+C Signing Confirmation
+ * JARDÍN plain-FORS Sign Confirmation
  * ================================================================ */
 
 static void jardin_sign_review_cb(bool confirm) {
@@ -237,12 +166,11 @@ static void jardin_sign_review_cb(bool confirm) {
     }
 }
 
-/* Called after JARDÍN signature chunks are fully sent to return to idle screen */
 void ui_jardin_sign_done(void) {
     nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_SIGNED, ui_idle);
 }
 
-void ui_jardin_confirm_sign(const uint8_t msg_hash[32], uint8_t q) {
+void ui_jardin_confirm_sign(const uint8_t msg_hash[32], uint16_t q) {
     memcpy(pending_msg_hash, msg_hash, 32);
 
     sphincs_to_hex(msg_hash, 32, msg_hash_hex);
@@ -253,7 +181,7 @@ void ui_jardin_confirm_sign(const uint8_t msg_hash[32], uint8_t q) {
 
     pairs[0].item = "Message hash";
     pairs[0].value = msg_hash_hex;
-    pairs[1].item = "FORS+C leaf (q)";
+    pairs[1].item = "FORS leaf (q)";
     pairs[1].value = q_str;
 
     pairsList.nbPairs = 2;
@@ -265,99 +193,51 @@ void ui_jardin_confirm_sign(const uint8_t msg_hash[32], uint8_t q) {
     nbgl_useCaseReview(TYPE_TRANSACTION,
                        &pairsList,
                        get_app_icon(false),
-                       "Review JARDIN\ntransaction",
+                       "Review JARDIN\nsignature",
                        NULL,
-                       "Sign transaction?",
+                       "Sign with JARDIN?",
                        jardin_sign_review_cb);
 }
 
 /* ================================================================
- * JARDINERO T0 Signing Confirmation
- * ================================================================ */
-
-static void t0_sign_review_cb(bool confirm) {
-    if (confirm) {
-        t0_sign_approved = true;
-        io_seproxyhal_send_status(APDU_RESPONSE_OK, 0, false, false);
-    } else {
-        t0_sign_approved = false;
-        io_seproxyhal_send_status(APDU_RESPONSE_CONDITION_NOT_SATISFIED, 0, true, false);
-        nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_REJECTED, ui_idle);
-    }
-}
-
-/* ================================================================
- *  Garden-themed progress spinner for JARDIN (active + pending) keygen.
- *
- *  Picks the label from the progress fraction:
- *     phase 1 ( 0% ..  24%): "Planting JARDIN N/T"
- *     phase 2 (25% ..  74%): "Growing JARDIN N/T"
- *     phase 3 (75% ..  99%): "Blooming JARDIN N/T"
- *     done  ( 100%        ): "JARDIN in bloom!"
+ * Garden spinner + slot-ready banner
  * ================================================================ */
 
 static char garden_text[48];
 
 void ui_jardin_garden_progress(uint32_t step, uint32_t total) {
-    if (total == 0) return;
-
-    if (step >= total) {
-        strcpy(garden_text, "JARDIN in bloom!");
-        nbgl_useCaseSpinner(garden_text);
-        io_seproxyhal_io_heartbeat();
+    const char *prefix;
+    if (total == 0 || step == 0) {
+        prefix = "Planting JARDIN";
+    } else if (step >= total) {
+        nbgl_useCaseSpinner("JARDIN in bloom!");
         return;
+    } else if (step * 4 < total) {
+        prefix = "Planting JARDIN";
+    } else if (step * 4 < total * 3) {
+        prefix = "Growing JARDIN";
+    } else {
+        prefix = "Blooming JARDIN";
     }
-
-    /* Pick verb by quartile. */
-    const char *verb;
-    uint32_t pct = (step * 100u) / total;
-    if (pct < 25)      verb = "Planting";
-    else if (pct < 75) verb = "Growing";
-    else               verb = "Blooming";
 
     char step_str[12], total_str[12];
     uint_to_str(step, step_str);
     uint_to_str(total, total_str);
 
-    /* "Planting JARDIN 12/64" */
-    strcpy(garden_text, verb);
-    strcat(garden_text, " JARDIN ");
-    strcat(garden_text, step_str);
-    strcat(garden_text, "/");
-    strcat(garden_text, total_str);
+    size_t off = 0;
+    size_t pl  = strlen(prefix);
+    memcpy(garden_text + off, prefix, pl); off += pl;
+    garden_text[off++] = ' ';
+    size_t sl = strlen(step_str);
+    memcpy(garden_text + off, step_str, sl); off += sl;
+    garden_text[off++] = '/';
+    size_t tl = strlen(total_str);
+    memcpy(garden_text + off, total_str, tl); off += tl;
+    garden_text[off]   = '\0';
 
     nbgl_useCaseSpinner(garden_text);
-    io_seproxyhal_io_heartbeat();
 }
 
 void ui_jardin_slot_ready(void) {
-    strcpy(garden_text, "JARDIN slot ready");
-    nbgl_useCaseSpinner(garden_text);
-    io_seproxyhal_io_heartbeat();
-}
-
-void ui_t0_confirm_sign(const uint8_t msg_hash[32]) {
-    memcpy(pending_msg_hash, msg_hash, 32);
-
-    sphincs_to_hex(msg_hash, 32, msg_hash_hex);
-
-    static nbgl_contentTagValue_t pairs[1];
-    static nbgl_contentTagValueList_t pairsList;
-
-    pairs[0].item = "Message hash";
-    pairs[0].value = msg_hash_hex;
-
-    pairsList.nbPairs = 1;
-    pairsList.pairs = pairs;
-    pairsList.smallCaseForValue = false;
-    pairsList.nbMaxLinesForValue = 0;
-    pairsList.wrapping = false;
-
-    nbgl_useCaseReview(TYPE_TRANSACTION,
-                       &pairsList,
-                       get_app_icon(false),
-                       "Review JARDIN\nregistration",
-                       NULL,
-                       "Sign registration?",
-                       t0_sign_review_cb);
+    nbgl_useCaseSpinner("JARDIN slot ready");
 }

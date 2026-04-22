@@ -1,67 +1,92 @@
 /**
- * SPHINCS+ C11 Parameters
+ * Plain SPHINCS+ Parameters (stateless registration path)
  *
- * W+C_F+C scheme: h=16 d=2 a=11 k=13 w=8 l=43 swn=203
- * n=128 bits (16 bytes), keccak256-based
+ * Matches script/jardin_spx_signer.py + src/JardinSpxVerifier.sol in the
+ * SPHINCs- reference repo.
  *
- * Security: 128-bit at 2^14 signatures per key
- * Signature size: 3976 bytes
- * Signing hashes: ~292K keccak256 calls
+ *   n  = 16            keccak256 truncated to 128 bits
+ *   h  = 20            total hypertree height
+ *   d  = 5             XMSS layers
+ *   h' = h/d = 4       leaves per XMSS tree = 2^4 = 16
+ *   a  = 7             FORS tree height (128 leaves/tree)
+ *   k  = 20            FORS trees per signature
+ *   w  = 8             Winternitz
+ *   l1 = 42            message chains = floor(128/3)
+ *   l2 = 3             checksum chains = ceil(log_w(l1·(w-1)))
+ *   l  = 45            total WOTS chains
+ *   R  = 32 bytes      per-sig randomness
+ *   ADRS = 32 bytes    (JARDÍN convention — shared with plain FORS)
+ *
+ * No C11 grinding, no forced-zero-digit. Deterministic sign.
+ *
+ * Signature layout (6512 bytes):
+ *   0      32     R
+ *   32     2560   FORS (20 trees × (16B sk + 7×16B auth) = 20 × 128B)
+ *   2592   3920   Hypertree (5 layers × (45×16B WOTS + 4×16B XMSS auth))
  */
 
 #pragma once
 
 #include <stdint.h>
-#include <stddef.h>
+#include "sphincs_hash.h"   /* SPHINCS_N + ADRS_* type codes (shared) */
 
-/* Core parameters */
-#define SPHINCS_N               16      /* Hash output: 128 bits = 16 bytes */
-#define SPHINCS_H               16      /* Hypertree total height */
-#define SPHINCS_D                2      /* Hypertree layers */
-#define SPHINCS_A               11      /* FORS tree height (leaves = 2^a) */
-#define SPHINCS_K               13      /* FORS trees */
-#define SPHINCS_W                8      /* Winternitz parameter */
-#define SPHINCS_L               43      /* WOTS chain count */
-#define SPHINCS_SWN            203      /* WOTS+C target digit sum */
+/* Core scheme parameters (SPHINCS_N comes from sphincs_hash.h) */
+#define SPHINCS_H            20     /* hypertree height */
+#define SPHINCS_D             5     /* XMSS layers */
+#define SPHINCS_A             7     /* FORS tree height */
+#define SPHINCS_K            20     /* FORS trees per sig */
+#define SPHINCS_W             8     /* Winternitz */
+#define SPHINCS_L1           42
+#define SPHINCS_L2            3
+#define SPHINCS_L            45     /* total WOTS chains */
 
-/* Derived parameters */
-#define SPHINCS_SUBTREE_H       (SPHINCS_H / SPHINCS_D)   /* 8 */
-#define SPHINCS_LOG_W            3      /* log2(w) */
-#define SPHINCS_W_MASK        0x07      /* w - 1 */
-#define SPHINCS_A_MASK       0x7FF      /* 2^a - 1 */
-#define SPHINCS_HT_MASK     0xFFFF      /* 2^h - 1 */
-#define SPHINCS_LEAF_MASK     0xFF      /* 2^subtree_h - 1 */
-#define SPHINCS_HT_SHIFT      143      /* k * a = 13 * 11 */
-#define SPHINCS_FORCED_SHIFT  132      /* (k-1) * a = 12 * 11 */
+/* Derived */
+#define SPHINCS_H_PRIME      (SPHINCS_H / SPHINCS_D)       /* 4 */
+#define SPHINCS_LOG_W         3                            /* log2(w) */
+#define SPHINCS_W_MASK       0x07                          /* w - 1 */
+#define SPHINCS_A_MASK       0x7F                          /* 2^a - 1 */
+#define SPHINCS_H_PRIME_MASK 0x0F                          /* 2^h' - 1 */
+#define SPHINCS_TREE_TOP_BITS (SPHINCS_H - SPHINCS_H_PRIME) /* 16 */
+#define SPHINCS_TREE_TOP_MASK 0xFFFFu                      /* (1 << 16) - 1 */
+#define SPHINCS_LEAVES_PER_XMSS (1u << SPHINCS_H_PRIME)    /* 16 */
+#define SPHINCS_LEAVES_PER_FORS (1u << SPHINCS_A)          /* 128 */
 
-/* Signature layout sizes (bytes) */
-#define SPHINCS_R_SIZE          SPHINCS_N                                  /* 16 */
-#define SPHINCS_FORS_SECRETS    (SPHINCS_K * SPHINCS_N)                    /* 208 */
-#define SPHINCS_FORS_AUTH       ((SPHINCS_K - 1) * SPHINCS_A * SPHINCS_N) /* 2112 */
-#define SPHINCS_FORS_SIZE       (SPHINCS_R_SIZE + SPHINCS_FORS_SECRETS + SPHINCS_FORS_AUTH) /* 2336 */
-
-#define SPHINCS_WOTS_SIG        (SPHINCS_L * SPHINCS_N)                    /* 688 */
-#define SPHINCS_COUNTER_SIZE     4
-#define SPHINCS_HT_AUTH         (SPHINCS_SUBTREE_H * SPHINCS_N)            /* 128 */
-#define SPHINCS_HT_LAYER_SIZE   (SPHINCS_WOTS_SIG + SPHINCS_COUNTER_SIZE + SPHINCS_HT_AUTH) /* 820 */
-#define SPHINCS_HT_SIZE         (SPHINCS_D * SPHINCS_HT_LAYER_SIZE)        /* 1640 */
-
-#define SPHINCS_SIG_SIZE        (SPHINCS_FORS_SIZE + SPHINCS_HT_SIZE)      /* 3976 */
+/* Signature sizes (bytes) */
+#define SPHINCS_R_LEN         32
+#define SPHINCS_FORS_TREE_SZ  (SPHINCS_N + SPHINCS_A * SPHINCS_N)      /* 16 + 112 = 128 */
+#define SPHINCS_FORS_BODY     (SPHINCS_K * SPHINCS_FORS_TREE_SZ)       /* 2560 */
+#define SPHINCS_HT_LAYER_SZ   (SPHINCS_L * SPHINCS_N + SPHINCS_H_PRIME * SPHINCS_N) /* 720 + 64 = 784 */
+#define SPHINCS_HT_BODY       (SPHINCS_D * SPHINCS_HT_LAYER_SZ)        /* 3920 */
+#define SPHINCS_SIG_SIZE      (SPHINCS_R_LEN + SPHINCS_FORS_BODY + SPHINCS_HT_BODY) /* 6512 */
 
 /* Key sizes */
-#define SPHINCS_PK_SEED_SIZE    SPHINCS_N   /* 16 bytes */
-#define SPHINCS_SK_SEED_SIZE    32          /* 256 bits for entropy */
-#define SPHINCS_PK_ROOT_SIZE    SPHINCS_N   /* 16 bytes */
-#define SPHINCS_PK_SIZE         (SPHINCS_PK_SEED_SIZE + SPHINCS_PK_ROOT_SIZE)  /* 32 bytes */
+#define SPHINCS_PK_SEED_SIZE  SPHINCS_N                                /* 16 */
+#define SPHINCS_PK_ROOT_SIZE  SPHINCS_N                                /* 16 */
+#define SPHINCS_PK_SIZE       (SPHINCS_PK_SEED_SIZE + SPHINCS_PK_ROOT_SIZE) /* 32 */
+#define SPHINCS_SK_SEED_SIZE  SPHINCS_N                                /* 16 — matches signer */
+#define SPHINCS_SK_PRF_SIZE   SPHINCS_N                                /* 16 */
 
-/* Address types (tweakable hash domain separation) */
-#define ADRS_WOTS         0
-#define ADRS_WOTS_PK      1
-#define ADRS_TREE         2
-#define ADRS_FORS_TREE    3
-#define ADRS_FORS_ROOTS   4
+/* H_msg domain byte — plain-SPX (distinct from C11 0xFF, T0 0xFE, plain-FORS 0xFD) */
+#define SPHINCS_HMSG_DOMAIN_BYTE  0xFC
 
-/* H_msg domain separator (last word = 0xFF...FF for 160-byte hash) */
-#define HMSG_DOMAIN_BYTE  0xFF
+/* Per-secret tags — match jardin_spx_signer.py wots_secret / fors_secret */
+#define SPHINCS_WOTS_TAG      "spx_wots"
+#define SPHINCS_WOTS_TAG_LEN   8
+#define SPHINCS_FORS_TAG      "spx_fors"
+#define SPHINCS_FORS_TAG_LEN   8
 
-/* end of sphincs_params.h */
+/* R-derivation tag */
+#define SPHINCS_R_TAG         "spx_R"
+#define SPHINCS_R_TAG_LEN      5
+
+/* Master derivation tags (device-side keccak-based — does NOT match the
+ * Python signer's HMAC-SHA512, but produces an equivalent fresh keyset that
+ * the on-chain verifier still accepts). */
+#define SPHINCS_PK_SEED_TAG     "spx_pk_seed"
+#define SPHINCS_PK_SEED_TAG_LEN 11
+#define SPHINCS_SK_SEED_TAG     "spx_sk_seed"
+#define SPHINCS_SK_SEED_TAG_LEN 11
+#define SPHINCS_SK_PRF_TAG      "spx_sk_prf"
+#define SPHINCS_SK_PRF_TAG_LEN  10
+
+/* ADRS type codes are defined in sphincs_hash.h (shared family) */

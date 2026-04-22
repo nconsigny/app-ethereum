@@ -47,7 +47,6 @@
 #include "sign_message.h"
 #include "sphincs_apdu.h"
 #include "jardin_apdu.h"
-#include "t0_apdu.h"
 
 tmpCtx_t tmpCtx;
 txContext_t txContext;
@@ -269,14 +268,6 @@ static uint16_t handleApdu(command_t *cmd, uint32_t *flags, uint32_t *tx) {
 
         case INS_JARDIN_SIGN:
             sw = handleJardinSign(cmd->p1, cmd->p2, cmd->data, cmd->lc, flags, tx);
-            break;
-
-        case INS_T0_KEYGEN:
-            sw = handleT0Keygen(cmd->p1, cmd->p2, cmd->data, cmd->lc, flags, tx);
-            break;
-
-        case INS_T0_SIGN:
-            sw = handleT0Sign(cmd->p1, cmd->p2, cmd->data, cmd->lc, flags, tx);
             break;
 
         default:

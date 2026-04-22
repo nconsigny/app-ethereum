@@ -1,5 +1,9 @@
 /**
- * SPHINCS+ C11 UI — Confirmation screens for NBGL devices
+ * JARDÍN / SPHINCS+ NBGL confirmation screens
+ *
+ * Shared between:
+ *   - Plain SPHINCS+ (stateless registration path): INS 0x40 / 0x42
+ *   - Plain FORS     (compact signing path):        INS 0x44 / 0x46
  */
 
 #pragma once
@@ -7,45 +11,40 @@
 #include <stdint.h>
 
 /**
- * Show SPHINCS+ public key confirmation screen.
- * Displays pk_seed and pk_root in hex for user verification.
- * Calls back to send APDU response on approve/reject.
+ * Show SPHINCS+ public key confirmation screen (after keygen).
+ * Displays pk_seed and pk_root in hex; callback emits the APDU reply.
  */
 void ui_sphincs_confirm_pubkey(void);
 
 /**
  * Show SPHINCS+ signing confirmation screen.
- * Displays the message hash being signed.
- * On approval, triggers signing + chunked response.
+ * On approval, sets sphincs_sign_approved = true and host drives the
+ * chunked signing APDUs; on rejection, returns to idle.
  */
 void ui_sphincs_confirm_sign(const uint8_t msg_hash[32]);
 
 /**
- * Show JARDÍN FORS+C signing confirmation screen.
- * Displays message hash and leaf index q.
- * On approval, sets jardin_sign_approved = true.
+ * Show plain-FORS signing confirmation screen.
+ * q is 1-indexed in [1, 2^h] — up to 256 at h=JARDIN_H_MAX=8.
  */
-void ui_jardin_confirm_sign(const uint8_t msg_hash[32], uint8_t q);
+void ui_jardin_confirm_sign(const uint8_t msg_hash[32], uint16_t q);
 
 /**
- * Show "Transaction signed" status and return to idle screen.
- * Call after last JARDÍN signature chunk is sent.
+ * Return to idle screen with a "Transaction signed" status banner.
+ * Call after the last JARDIN signature chunk has been sent.
  */
 void ui_jardin_sign_done(void);
 
 /**
- * Show JARDINERO T0 signing confirmation screen.
- * On approval, sets t0_sign_approved = true so chunked signing can proceed.
- */
-void ui_t0_confirm_sign(const uint8_t msg_hash[32]);
-
-/**
- * Garden-themed progress spinner, invoked once per JARDIN leaf computation.
- * phase advances the text: "Planting" (0..24%), "Growing" (25..74%),
- * "Blooming" (75..99%), "In bloom!" at completion (step == total).
- * Safe to call from APDU handlers.
+ * Garden-themed progress spinner for the pending-slot precompute.
+ * Updates a text label on the home spinner based on progress quartile:
+ *   step ==        0        → "Planting JARDIN..."
+ *   step <  total/4         → "Planting JARDIN N/T"
+ *   step <  total*3/4       → "Growing JARDIN N/T"
+ *   step <  total           → "Blooming JARDIN N/T"
+ *   step == total           → "JARDIN in bloom!"
  */
 void ui_jardin_garden_progress(uint32_t step, uint32_t total);
 
-/** Short "JARDIN ready" spinner shown when a pending slot finalizes. */
+/** Brief "JARDIN slot ready" status shown when a pending slot finalizes. */
 void ui_jardin_slot_ready(void);
