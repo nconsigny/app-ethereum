@@ -23,3 +23,7 @@ extern nbgl_warning_t warning;
 
 void ui_idle(void);
 void ui_settings(void);
+
+/* Home-screen "Grow the garden" action button handler — advances a
+ * bounded batch of pending-slot leaves and redraws the home screen. */
+void ui_jardin_grow_action(void);

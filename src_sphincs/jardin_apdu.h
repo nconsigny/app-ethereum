@@ -39,3 +39,20 @@ uint16_t handleJardinKeygen(uint8_t p1, uint8_t p2,
 uint16_t handleJardinSign(uint8_t p1, uint8_t p2,
                            const uint8_t *data, uint8_t length,
                            unsigned int *flags, unsigned int *tx);
+
+/* ================================================================
+ *  Device-driven "Grow the garden" — home-screen action button.
+ *
+ *  Return codes (what happened this batch):
+ *    0: precondition missing (no T0 identity or no active slot)
+ *    1: grew some leaves, not done yet (call again to continue)
+ *    2: finished the pending slot — sub_pk_root is now in NVRAM
+ *    3: pending was already finalized (nothing to do)
+ * ================================================================ */
+
+/* Kept small: blocking more than a few seconds inside an NBGL action-button
+ * callback upsets the event loop (black-screen on Nano S+). 2 leaves × ~3s
+ * = ~6s per tap — user can tap repeatedly. */
+#define GROW_GARDEN_BATCH_DEFAULT 2
+
+uint32_t jardin_grow_garden_batch(uint32_t batch_cap);

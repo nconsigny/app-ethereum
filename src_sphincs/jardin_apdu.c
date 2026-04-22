@@ -19,6 +19,7 @@
 #include "shared_context.h"
 #include "apdu_constants.h"
 #include "common_ui.h"  /* ui_idle() */
+#include "sphincs_ui.h" /* ui_jardin_garden_progress / ui_jardin_slot_ready */
 
 extern uint8_t G_io_apdu_buffer[];
 extern uint8_t mem_buffer[];
@@ -520,4 +521,108 @@ uint16_t handleJardinSign(uint8_t p1, uint8_t p2,
     ui_jardin_confirm_sign(msg_hash, q);
     *flags |= IO_ASYNCH_REPLY;
     return APDU_NO_RESPONSE;
+}
+
+/* ================================================================
+ *  Device-driven grow garden: invoked from the home-screen action
+ *  button (src_nbgl/ui_home.c). Runs a bounded batch of leaves with
+ *  the garden spinner and, if no pending slot exists yet, seeds one
+ *  from the device TRNG (no host cooperation needed).
+ * ================================================================ */
+
+static void ensure_pending_ram_state(void) {
+    /* If RAM already in sync and there's progress in NVRAM, nothing to do. */
+    if (pending_in_progress) return;
+
+    const jardin_nvram_t *nv = jardin_nvram_get();
+    if (nv->pending_ready == PENDING_READY_NONE) return;
+
+    memset(&pending_state, 0, sizeof(pending_state));
+    memcpy(pending_state.seed,    nv->pending_sub_pk_seed, JARDIN_N);
+    memcpy(pending_state.sk_seed, nv->pending_sk_seed, 32);
+    pending_state.merkle_h = nv->pending_merkle_h;
+    pending_state.n_leaves = (uint32_t)nv->pending_q_max;
+    pending_state.step     = nv->pending_progress;
+    pending_state.done     = (pending_state.step >= pending_state.n_leaves) ? 1 : 0;
+    if (pending_state.step > 0) {
+        memcpy(pending_state.fors_pks, nv->pending_fors_pks,
+               pending_state.step * JARDIN_N);
+    }
+    pending_in_progress = true;
+}
+
+static uint32_t start_fresh_pending_from_device(void) {
+    /* Pick the successor height using the active slot's h + 1 (matches the
+     * host-side escalation policy). */
+    const jardin_nvram_t *nv = jardin_nvram_get();
+    uint8_t active_h = nv->active_merkle_h;
+    if (active_h < JARDIN_MERKLE_H_MIN || active_h > JARDIN_MERKLE_H_MAX) {
+        return 0; /* no valid active slot → can't decide h */
+    }
+    uint8_t next_h = (active_h < JARDIN_MERKLE_H_MAX) ? active_h + 1 : JARDIN_MERKLE_H_MAX;
+
+    uint8_t r[32];
+    cx_rng_no_throw(r, 32);
+
+    uint8_t master_sk[32];
+    memcpy(master_sk,         nv->t0_sk_seed, T0_N);
+    memcpy(master_sk + T0_N,  nv->t0_sk_prf,  T0_N);
+
+    uint8_t pk_seed[JARDIN_N];
+    jardin_pending_init(master_sk, r, next_h, &pending_state, pk_seed);
+    explicit_bzero(master_sk, 32);
+    pending_in_progress = true;
+
+    jardin_pending_nvram_init(r, pk_seed, pending_state.sk_seed, next_h);
+    explicit_bzero(r, 32);
+    return 1;
+}
+
+uint32_t jardin_grow_garden_batch(uint32_t batch_cap) {
+    /* CRITICAL: transition NBGL away from the home screen BEFORE doing
+     * any heavy work. Without this the action-button callback stays in
+     * the home screen's NBGL state while we block for seconds, which
+     * causes a black-screen hang on Nano S+. */
+    ui_jardin_garden_progress(0, 1);   /* draws "Planting JARDIN 0/1" */
+
+    /* Precondition checks. */
+    if (!t0_nvram_is_valid())       return 0;  /* no T0 identity */
+    if (!jardin_nvram_is_valid())   return 0;  /* no active slot to derive h from */
+
+    /* If pending is already finalized, nothing to grow. */
+    if (jardin_pending_nvram_is_ready()) {
+        ui_jardin_slot_ready();
+        return 3;
+    }
+
+    /* Recover RAM state from NVRAM if the app was restarted. */
+    ensure_pending_ram_state();
+
+    /* If still no pending, seed one from the device TRNG. */
+    if (!pending_in_progress) {
+        if (!start_fresh_pending_from_device()) return 0;
+    }
+
+    /* Grow loop — bounded by batch_cap leaves and the slot size. */
+    if (batch_cap == 0) batch_cap = GROW_GARDEN_BATCH_DEFAULT;
+
+    for (uint32_t i = 0; i < batch_cap && !pending_state.done; i++) {
+        sphincs_set_seed(pending_state.seed);
+        uint32_t idx = jardin_pending_step(&pending_state);
+        jardin_pending_nvram_save_leaf(idx, pending_state.fors_pks[idx]);
+        ui_jardin_garden_progress(pending_state.step, pending_state.n_leaves);
+    }
+
+    /* Finalize the tree if we just closed the last leaf. */
+    if (pending_state.done) {
+        uint8_t pk_root[JARDIN_N];
+        jardin_pending_finalize(&pending_state,
+                                (uint8_t (*)[JARDIN_N])mem_buffer,
+                                pk_root);
+        jardin_pending_nvram_finalize(pk_root);
+        ui_jardin_slot_ready();
+        return 2;
+    }
+
+    return 1;
 }

@@ -2,6 +2,7 @@
 #include "caller_api.h"
 #include "network.h"
 #include "cmd_get_tx_simulation.h"
+#include "jardin_apdu.h"  /* jardin_grow_garden_batch() */
 
 // Global Warning struct for NBGL review flows
 nbgl_warning_t warning;
@@ -221,13 +222,24 @@ static void prepare_and_display_home(const char *appname, const char *tagline, u
     infoList.infoTypes = infoTypes;
     infoList.infoContents = infoContents;
 
+    /* "Grow the garden" home-screen action button — runs the pending-slot
+     * precompute directly on-device, no host needed. Each tap grows a
+     * bounded batch of leaves (~16 × ~3s ≈ 1 min). Re-tap to continue
+     * until the spinner shows "JARDIN in bloom!". */
+    static const nbgl_homeAction_t jardin_grow_action = {
+        .text     = "Grow the garden",
+        .icon     = NULL,
+        .callback = ui_jardin_grow_action,
+        .style    = STRONG_HOME_ACTION,
+    };
+
     nbgl_useCaseHomeAndSettings(appname,
                                 get_home_icon(),
                                 tagline,
                                 page,
                                 &settingContents,
                                 &infoList,
-                                NULL,
+                                &jardin_grow_action,
                                 app_exit);
 }
 
@@ -250,6 +262,21 @@ static void get_appname_and_tagline(const char **appname, const char **tagline) 
         mainnet_chain_id = ETHEREUM_MAINNET_CHAINID;
         *appname = get_network_name_from_chain_id(&mainnet_chain_id);
     }
+}
+
+/**
+ * Home-screen "Grow the garden" action.
+ * Advances the pending slot's precompute by a bounded batch. After
+ * each call the home screen is re-displayed so the user can tap again
+ * (or walk away). If the slot finishes, pending_ready == FINAL and
+ * the host can then register+promote.
+ */
+void ui_jardin_grow_action(void) {
+    uint32_t rc = jardin_grow_garden_batch(GROW_GARDEN_BATCH_DEFAULT);
+    (void)rc;
+    /* Whatever happened, return to home. The spinner inside the grow
+     * function showed progress; here we just repaint the idle screen. */
+    ui_idle();
 }
 
 /**
