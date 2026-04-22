@@ -1,3 +1,46 @@
+# EthSPHINCS — post-quantum signing fork of app-ethereum
+
+> **Research prototype, not audited.** Fork of
+> [LedgerHQ/app-ethereum](https://github.com/LedgerHQ/app-ethereum)
+> adding post-quantum signatures to the Ledger Nano S+ Ethereum app.
+> Do not use with mainnet funds. Sepolia / ethrex only.
+
+**What this adds on top of the upstream Ethereum app:**
+
+| Scheme | APDUs | Purpose |
+|---|---|---|
+| SPHINCS+ **C11** | `0x40` / `0x42` | Legacy stateless signer (pre-JARDINERO) |
+| **JARDIN FORS+C** compact | `0x44` / `0x46` | Few-time signature with balanced Merkle tree, variable height h in [2, 8] |
+| **JARDINERO T0** | `0x48` / `0x4A` | Onboarding-friendly hypertree scheme; primary Type 1 registration path |
+
+Highlights (as of v1.46.0):
+
+- **Dual-slot NVRAM** — device precomputes the next FORS+C slot in the
+  background while the active one is still usable. Flip via an atomic
+  promote APDU.
+- **"Grow the garden" home-screen button** — device-driven pending
+  precompute with a garden-themed spinner. No host needed to advance
+  the next slot.
+- **Variable-height FORS+C** — slot height is a per-slot parameter,
+  letting you trade slot size vs keygen time at registration.
+- **Async submission + auto-precompute** — Python flow uses
+  `cast send --async`, tracks nonce expectations, and piggy-backs a few
+  leaves of background keygen on every Type 2.
+
+See [`CLAUDE.md`](./CLAUDE.md) for the full APDU protocol, NVRAM schema,
+sideload procedure, key derivation, deployed-contract addresses, and
+known Nano S+ platform constraints.
+
+Paired Solidity / Python side lives in
+[nconsigny/SPHINCs- (JARDINERO branch)](https://github.com/nconsigny/SPHINCs-/tree/JARDINERO)
+— verifiers, factory, off-chain reference signers.
+
+---
+
+## Upstream app-ethereum README
+
+The rest of this file is unchanged from `LedgerHQ/app-ethereum`.
+
 <br />
 <div align="center">
   <a href="https://github.com/LedgerHQ/app-ethereum">
