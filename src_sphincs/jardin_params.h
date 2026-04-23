@@ -30,10 +30,17 @@
 #define JARDIN_N            16      /* hash output bytes */
 #define JARDIN_A_MASK     0x0F      /* 2^a - 1 */
 
-/* Outer balanced Merkle tree over Q_MAX = 2^h FORS public keys. */
+/* Outer balanced Merkle tree over Q_MAX = 2^h FORS public keys.
+ *
+ * H_MAX=7 on-device (Nano S+ SRAM cap): at H_MAX=8 the active fors_pks
+ * (4096 B) + merkle_nodes (4080 B) + pending fors_pks (4096 B) + plain
+ * SPHINCS+ fors_nodes (4080 B) overflow the ~30 KB SRAM. 7 keeps the
+ * h=4 → h=7 escalation ladder intact; SPHINCs- Vh verifier accepts any
+ * h ∈ [2, 8] so a future larger device can raise this without on-chain
+ * changes. */
 #define JARDIN_H_MIN          2
-#define JARDIN_H_MAX          8
-#define JARDIN_Q_MAX        256   /* 2^H_MAX — allocation ceiling for fors_pks / merkle_nodes */
+#define JARDIN_H_MAX          7
+#define JARDIN_Q_MAX        128   /* 2^H_MAX — allocation ceiling for fors_pks / merkle_nodes */
 
 /* Derived */
 #define JARDIN_LEAVES_PER_TREE      (1u << JARDIN_A)                        /* 16 */
