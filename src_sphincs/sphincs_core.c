@@ -210,17 +210,18 @@ static void wots_sign_into(const uint8_t seed[SPHINCS_N],
  * ================================================================ */
 
 static void wots_digits(const uint8_t msg[SPHINCS_N], uint8_t digits[SPHINCS_L]) {
-    /* MSB-first extraction of 3-bit digits from the 128-bit big-endian msg.
-     * For digit i, bits at MSB offsets 3i..3i+2. Use a 16-bit sliding window:
-     *   window bit 15 = MSB bit of msg[byte_idx]
-     *   shift right by (13 - bit_in_byte) brings bits (3i..3i+2) to LSB. */
+    /* LSB-first extraction of L1=42 base-8 digits from the 128-bit msg
+     * (matches jardin_spx_signer.base_w_node, which treats msg as an int's
+     * low 128 bits and reads (v >> (3i)) & 7). msg[15] is the LSB byte;
+     * msg[0] is the MSB byte (big-endian encoding). */
     for (uint32_t i = 0; i < SPHINCS_L1; i++) {
-        uint32_t bit_off = 3u * i;
-        uint32_t byte_idx = bit_off / 8;                 /* 0..15 */
-        uint32_t bit_in_byte = bit_off % 8;              /* 0..7 */
-        uint16_t window = ((uint16_t)msg[byte_idx] << 8) |
-                          (byte_idx + 1 < SPHINCS_N ? msg[byte_idx + 1] : 0);
-        digits[i] = (uint8_t)((window >> (13u - bit_in_byte)) & SPHINCS_W_MASK);
+        uint32_t bit_off = 3u * i;                       /* from LSB */
+        uint32_t byte_from_lsb = bit_off / 8;            /* 0..15 */
+        uint32_t bit_in_byte = bit_off % 8;              /* 0..7  */
+        uint8_t  lo = msg[SPHINCS_N - 1 - byte_from_lsb];
+        uint8_t  hi = (byte_from_lsb + 1 < SPHINCS_N) ? msg[SPHINCS_N - 2 - byte_from_lsb] : 0;
+        uint16_t window = (uint16_t)lo | ((uint16_t)hi << 8);
+        digits[i] = (uint8_t)((window >> bit_in_byte) & SPHINCS_W_MASK);
     }
 
     /* Checksum = sum_{i=0}^{L1-1} (W-1 - digits[i]) */
@@ -333,28 +334,34 @@ static void fors_auth_path(uint32_t leaf_idx, uint8_t auth[SPHINCS_A][SPHINCS_N]
 static void parse_digest(const uint8_t digest[32],
                           uint8_t md[SPHINCS_K],
                           uint32_t *tree_idx_out, uint32_t *leaf_idx_out) {
-    /* md[i] extraction: MSB offset = 7*i. Byte idx = offset/8, shift within
-     * uint16 window from (offset%8) to get bits MSB-first. */
+    /* LSB-first extraction (matches jardin_spx_signer.digest_indices, which is
+     * LSB-first per the JARDIN family convention — NOT FIPS-205 MSB-first):
+     *   d_int = int.from_bytes(digest, "big")
+     *   md[t]    = (d_int >>  (7*t))           & 0x7F      for t in 0..K-1
+     *   tree_idx = (d_int >>  (K*A = 140))     & 0xFFFF    — 16 bits
+     *   leaf_idx = (d_int >>  (156))           & 0xF       — 4 bits
+     * digest[31] is the LSB byte; digest[0] is the MSB byte. */
     for (uint32_t i = 0; i < SPHINCS_K; i++) {
-        uint32_t off = 7u * i;
-        uint32_t byte_idx = off / 8;
-        uint32_t shift = 9u - (off % 8);    /* so (word >> shift) has bits at LSB */
-        uint16_t word = ((uint16_t)digest[byte_idx] << 8) |
-                        (byte_idx + 1 < 32 ? digest[byte_idx + 1] : 0);
-        md[i] = (uint8_t)((word >> shift) & SPHINCS_A_MASK);
+        uint32_t bit_off = 7u * i;
+        uint32_t byte_from_lsb = bit_off / 8;
+        uint32_t bit_in_byte   = bit_off % 8;
+        uint8_t  lo = digest[31 - byte_from_lsb];
+        uint8_t  hi = (byte_from_lsb < 31) ? digest[30 - byte_from_lsb] : 0;
+        uint16_t window = (uint16_t)lo | ((uint16_t)hi << 8);
+        md[i] = (uint8_t)((window >> bit_in_byte) & SPHINCS_A_MASK);
     }
 
-    /* tree_idx: bits MSB [140..155], 16 bits → byte offset 17.5, bit 4 in byte 17.
-     *   digest[17] low 4 bits = MSB bits 140..143,
-     *   digest[18] all        = MSB bits 144..151,
-     *   digest[19] high 4     = MSB bits 152..155. */
-    uint32_t t = ((uint32_t)(digest[17] & 0x0F) << 12) |
-                 ((uint32_t)digest[18] << 4) |
-                 ((uint32_t)(digest[19] >> 4) & 0x0F);
+    /* tree_idx: 16 bits at LSB offsets 140..155. Byte span is digest[14..12].
+     *   bit 140 = digest[31-17]=digest[14] bit 4 (LSB-indexed within byte)
+     *   bit 155 = digest[31-19]=digest[12] bit 3
+     * Assemble from low-bit end. */
+    uint32_t t = ((uint32_t)digest[14] >> 4)        /* low 4 bits of tree_idx */
+               | ((uint32_t)digest[13] << 4)        /* middle 8 bits */
+               | (((uint32_t)digest[12] & 0x0F) << 12);  /* high 4 bits */
     *tree_idx_out = t & SPHINCS_TREE_TOP_MASK;
 
-    /* leaf_idx: bits MSB [156..159] = digest[19] low 4 bits. */
-    *leaf_idx_out = digest[19] & 0x0F;
+    /* leaf_idx: 4 bits at LSB offsets 156..159 = digest[12] high nibble. */
+    *leaf_idx_out = (digest[12] >> 4) & 0x0F;
 }
 
 /* ================================================================

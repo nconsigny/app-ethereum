@@ -50,9 +50,10 @@ python3 -m ledgerblue.loadApp \
 **Critical flags**
 - `--targetVersion=""` — without this, `680f` at commit step (actually
   harmless, the app is still loaded)
-- `--dataSize 10240` — dual-slot plain-FORS NVRAM (active + pending, each
-  ~4200 B at h=8) ≈ 8400 B, plus alignment. Was 16384 in v1.46 (also held
-  C11 + T0 master state, now gone). Old NVRAM is wiped on upgrade anyway —
+- `--dataSize 10240` — dual-slot plain-FORS NVRAM. Linker gives `N_jardin_real`
+  = 0x10cc (4300 B) at on-device cap h=7 (per-slot `fors_pks[128]` = 2 KB). 5120
+  would fit; 10240 kept for headroom against future growth. Was 16384 in v1.46
+  (also held C11 + T0 master state, now gone). Upgrading wipes NVRAM anyway —
   magic bumped and the struct layout changed.
 - `--installparamsSize 92` — from linker map `_einstall_parameters - _install_parameters`
 - `--appFlags 0x800` — library flag matching upstream Ethereum app
@@ -115,8 +116,9 @@ Sign:
 | 0x46 | 0x01 | sign execute → first chunk (after approval) | ~0.5–1 s |
 | 0x46 | 0x80 | sign chunk (250 B) | instant |
 
-Keygen total: `2^h` steps × ~0.5–1 s each. At h=4: 16 steps / ~10 s; at h=8:
-256 steps / ~2–3 min (one-time, per slot). Sig length: `2561 + 16·h` bytes.
+Keygen total: `2^h` steps × ~0.5–1 s each. At h=4: 16 steps / ~10 s; at h=7:
+128 steps / ~1–2 min (one-time, per slot). On-device cap is h=7; verifier
+accepts h ∈ [2, 8]. Sig length: `2561 + 16·h` bytes.
 
 **"Grow the garden" home-screen button**: tapped STRONG_HOME_ACTION runs
 `jardin_grow_garden_batch(GROW_GARDEN_BATCH_DEFAULT=2)` — auto-seeds a
@@ -155,7 +157,7 @@ smart-account UserOp. On-chain verifiers expect just the raw PQ bytes:
 ### RAM (BSS ~40 KB page-aligned)
 - `sphincs_sig_buf` overlaid on `mem_buffer` (16 KB from `mem_utils.c`,
   non-static) — signing and tx parsing never run concurrently
-- At h=8: `jardin_keygen_state` ≈ 8.2 KB (fors_pks 4096 + merkle_nodes 4080)
+- At h_max=7 (Q_MAX=128): `jardin_keygen_state` ≈ 4.1 KB (fors_pks 2048 + merkle_nodes 2032). On-chain verifier still accepts h ∈ [2, 8] so a future device with more SRAM can raise the cap without touching contracts
 - Plain SPX: `xmss_nodes` 496 B + `fors_nodes` 4080 B + `wots_tops` 720 B = ~5.3 KB
 - `jardin_pending_state_t` (compact — no merkle_nodes) ≈ 4.2 KB. The pending
   slot's balanced tree is built only at finalize, into `mem_buffer` (16 KB
@@ -167,8 +169,9 @@ smart-account UserOp. On-chain verifiers expect just the raw PQ bytes:
 - Access via `PIC()` macro: `(*(volatile jardin_nvram_t *)PIC(&N_jardin_real))`
 - Write via `nvm_write()` only, field-by-field to avoid 4 KB stack bursts
 - Schema (per slot): `r(32)`, `sub_pk_seed(16)`, `sub_pk_root(16)`,
-  `sub_sk_seed(32)`, `fors_pks[256][16]=4096`, `q(2)`, `q_max(2)`, `h(1)`,
-  `initialized/ready(1)` — ~4198 B + alignment each
+  `sub_sk_seed(32)`, `fors_pks[Q_MAX][16]`, `q(2)`, `q_max(2)`, `h(1)`,
+  `initialized/ready(1)`. At Q_MAX=128 (h_max=7) that's ~2150 B each, so
+  the dual-slot struct linker-measures at 0x10cc = 4300 B
 - `active_*` = currently signing slot (magic 0xD1 in `active_initialized`)
 - `pending_*` = background-precomputed successor (`pending_ready` in
   {NONE 0x00, BUILDING 0x01, FINAL 0x02}) + `pending_progress(2)` leaf counter
@@ -176,7 +179,7 @@ smart-account UserOp. On-chain verifiers expect just the raw PQ bytes:
   active → wipe pending. The wipe-before-copy is a safety interlock so
   exhausted FORS leaves can never be re-read.
 - Internal Merkle nodes NOT stored — rebuilt from leaves on `LOAD_NVRAM`
-  (≤255 hashes, < 1 s at h=8)
+  (≤127 hashes at h_max=7, << 1 s)
 - **Never change `--dataSize` between sideloads** (wipes NVRAM)
 - **Uninstalling wipes NVRAM.** Plain SPX keys re-derive from BIP32, so the
   on-chain SPX identity is stable; JARDIN slot state (r, leaves, q) is lost
