@@ -5,27 +5,61 @@
 > adding post-quantum signatures to the Ledger Nano S+ Ethereum app.
 > Do not use with mainnet funds. Sepolia / ethrex only.
 
-**What this adds on top of the upstream Ethereum app:**
+**What this adds on top of the upstream Ethereum app** (v1.47.x):
 
-| Scheme | APDUs | Purpose |
-|---|---|---|
-| SPHINCS+ **C11** | `0x40` / `0x42` | Legacy stateless signer (pre-JARDINERO) |
-| **JARDIN FORS+C** compact | `0x44` / `0x46` | Few-time signature with balanced Merkle tree, variable height h in [2, 8] |
-| **JARDINERO T0** | `0x48` / `0x4A` | Onboarding-friendly hypertree scheme; primary Type 1 registration path |
+| Scheme | APDUs | Purpose | Sig size |
+|---|---|---|---|
+| **Plain SPHINCS+** | `0x40` / `0x42` | Stateless registration / recovery path | 6 512 B |
+| **Plain FORS** (JARDIN) | `0x44` / `0x46` | Compact few-time signer, variable h ∈ [2, 7] on-device | 2 593 + 16·h B |
 
-Highlights (as of v1.46.0):
+**Highlights:**
 
-- **Dual-slot NVRAM** — device precomputes the next FORS+C slot in the
+- **Matches on-chain JardinSpxVerifier + JardinForsPlainVerifier byte‑for‑byte.**
+  Verified on Sepolia: [Type 1 register](https://sepolia.etherscan.io/tx/0x6797bdccff4c122c7d493e1de5725980a86c411163f26e5c07315ed44fb02c81)
+  (519 k gas, SPX), [Type 2 sign](https://sepolia.etherscan.io/tx/0x30f6dfbf6b25fb809e97efa725106c7a5d9208861a57c6e446b48530f61c5b6c)
+  (173 k gas, FORS at h=4).
+- **Dual-slot NVRAM** — device precomputes the next FORS slot in the
   background while the active one is still usable. Flip via an atomic
-  promote APDU.
+  promote APDU (pending → active, old active zeroed as safety interlock).
 - **"Grow the garden" home-screen button** — device-driven pending
-  precompute with a garden-themed spinner. No host needed to advance
-  the next slot.
-- **Variable-height FORS+C** — slot height is a per-slot parameter,
-  letting you trade slot size vs keygen time at registration.
-- **Async submission + auto-precompute** — Python flow uses
-  `cast send --async`, tracks nonce expectations, and piggy-backs a few
-  leaves of background keygen on every Type 2.
+  precompute (STRONG_HOME_ACTION, 2 leaves per tap). No host needed to
+  pre-stage the successor slot.
+- **Variable-height FORS** — slot height is a per-slot parameter,
+  letting you trade slot capacity (2^h sigs) vs keygen time at
+  registration. h=4 (16 sigs) ≈ 30 s; h=7 (128 sigs) ≈ 4 min one-time.
+- **Async submission** — Python flow uses `cast send --async`, tracks
+  nonce expectations across inclusion delays.
+
+## Measured vs expected (Nano S+, v1.47.2)
+
+Numbers from a live Sepolia `plain_full_flow.py cycle --h 4` run, device
+clocked at its usual speed. Keccak count is a theoretical estimate from
+the algorithm; wall-clock is what the device actually did.
+
+| Operation | Keccak calls | Expected time | Measured |
+|---|---:|---:|---:|
+| SPX keygen (top XMSS only, 16 WOTS keypairs) | ~5 070 | ~2.5 s | **7.6 s** |
+| SPX sign (6 phases: FORS + 5 HT layers) | ~31 000 | ~15 s | **47.3 s** (7.9 s/phase) |
+| FORS keygen h=4 (one FORS PK/step × 16) | ~8 800 | ~10 s | **29.6 s** (1.85 s/leaf) |
+| FORS keygen h=7 (128 steps) | ~70 000 | ~80 s | ≈ 4 min (extrapolated) |
+| FORS sign (single APDU compute) | ~550 | ~0.5 s | **2.0 s** |
+| NVRAM promote (pending → active) | 0 | ~0.5 s | ~0.5 s |
+
+Nano S+ real-world keccak throughput comes out to ~660 hash/s — ~3× slower
+than my flat estimates. Plenty within the OS watchdog's ~10–30 s budget
+per APDU at every split we use (≤ 8 s/phase max for SPX sign).
+
+| Signature component | Bytes |
+|---|---:|
+| Plain-SPX raw sig | **6 512** (R 32 + FORS 2 560 + HT 3 920) |
+| Plain-FORS raw sig (h=4) | **2 657** (R 32 + FORS body 2 560 + q 1 + merkle auth 64) |
+| Plain-FORS raw sig (h=7) | 2 705 |
+| Type 1 UserOp hybrid sig | 1 (type) + 65 (ECDSA) + 32 (sub seed/root) + 6 512 (SPX) = **6 610** |
+| Type 2 UserOp hybrid sig (h=4) | 1 + 65 + 32 + 2 657 = **2 755** |
+
+Legacy C11, JARDIN FORS+C (counter-grinded variants), and JARDINERO T0
+are archived in [`legacy/src_sphincs/`](./legacy/) for reference — not
+compiled.
 
 See [`CLAUDE.md`](./CLAUDE.md) for the full APDU protocol, NVRAM schema,
 sideload procedure, key derivation, deployed-contract addresses, and
